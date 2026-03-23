@@ -5,7 +5,7 @@
   "identifier": "ai.designcode.desktop",
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk2RUUwMTNEN0Q3QTQ4ClJXUkllbjA5QWU2V0FOUWhDeGtIanhQQTJnWjVMMGE4c0kxbWhYeXdkTitwUUtnUGhEM0hWL1VQCg==",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMzNTAwNTEzMTg2NzEzQUYKUldTdkUyY1lFd1ZRd3dJWWdFOE91SHRFZ1dITStsTEFWOWlLL2E4N3ZFVW1EaXBLTTRxa2xnb0UK",
       "endpoints": [
         "https://github.com/haruhiyuki/DesignCode/releases/latest/download/latest.json"
       ],
