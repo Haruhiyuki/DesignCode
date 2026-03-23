@@ -1,0 +1,58 @@
+DesignCode
+Copyright 2026 DesignCode contributors.
+
+This product includes software developed by third parties.
+
+───────────────────────────────────────────────────────
+
+Codex CLI
+Copyright OpenAI
+Licensed under the Apache License, Version 2.0
+https://github.com/openai/codex
+
+Gemini CLI
+Copyright Google LLC
+Licensed under the Apache License, Version 2.0
+https://github.com/google-gemini/gemini-cli
+
+OpenCode
+Copyright OpenCode contributors
+Licensed under the MIT License
+https://github.com/opencode-ai/opencode
+
+Vue.js
+Copyright 2014-present Evan You
+Licensed under the MIT License
+https://github.com/vuejs/core
+
+Tauri
+Copyright 2019-present Tauri Programme within The Commons Conservancy
+Licensed under the Apache License, Version 2.0 / MIT License
+https://github.com/tauri-apps/tauri
+
+Vite
+Copyright 2019-present Evan You and Vite contributors
+Licensed under the MIT License
+https://github.com/vitejs/vite
+
+html-to-image
+Licensed under the MIT License
+https://github.com/nicehash/html-to-image
+
+pdf-lib
+Licensed under the MIT License
+https://github.com/Hopding/pdf-lib
+
+ag-psd
+Licensed under the MIT License
+https://github.com/nicehash/ag-psd
+
+───────────────────────────────────────────────────────
+
+Note on Claude Code:
+
+Claude Code is proprietary software owned by Anthropic PBC.
+It is NOT bundled with DesignCode. Users who wish to use the
+Claude Code backend must install it separately on their own machine.
+Usage is subject to Anthropic's Commercial Terms of Service.
+https://github.com/anthropics/claude-code

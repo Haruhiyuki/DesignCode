@@ -1,0 +1,33 @@
+{
+  "name": "designcode",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "npm run frontend:build && node app/server/index.js",
+    "dev": "node --watch app/server/index.js",
+    "frontend:dev": "vite --host 127.0.0.1 --port 1420",
+    "frontend:build": "vite build",
+    "qa:workbench": "npm run frontend:build && node scripts/qa-workbench.mjs",
+    "desktop:prepare-runtime": "node scripts/prepare-desktop-runtime.mjs",
+    "desktop:dev": "npm run desktop:prepare-runtime && tauri dev",
+    "desktop:build": "node scripts/prepare-desktop-runtime.mjs --sign && env -u APPLE_ID -u APPLE_PASSWORD -u APPLE_TEAM_ID APPLE_SIGNING_IDENTITY=- tauri build --bundles app && node scripts/fix-bundle-signatures.mjs && node scripts/package-and-notarize.mjs",
+    "desktop:dev:windows": "npm run desktop:prepare-runtime && tauri dev --config src-tauri/tauri.windows.conf.json",
+    "desktop:build:windows": "node scripts/prepare-desktop-runtime.mjs && tauri build --config src-tauri/tauri.windows.conf.json"
+  },
+  "dependencies": {
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.10.0",
+    "ag-psd": "^30.1.0",
+    "canvas": "^3.2.1",
+    "html-to-image": "^1.11.13",
+    "pdf-lib": "^1.17.1",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "playwright": "^1.51.1",
+    "vite": "^6.2.2"
+  }
+}

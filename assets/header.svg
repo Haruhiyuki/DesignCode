@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 160" fill="none">
+  <defs>
+    <linearGradient id="icon-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#e85d35"/>
+      <stop offset="50%" stop-color="#f06a3c"/>
+      <stop offset="100%" stop-color="#f5a04a"/>
+    </linearGradient>
+    <linearGradient id="icon-mark" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#fff5ee"/>
+    </linearGradient>
+  </defs>
+
+  <g transform="translate(36, 16)">
+    <rect width="128" height="128" rx="28" ry="28" fill="url(#icon-bg)"/>
+    <rect width="128" height="128" rx="28" ry="28" fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="1"/>
+    <g transform="translate(64, 64)" fill="none" stroke="url(#icon-mark)" stroke-width="8.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M -16 -25 L -34 0 L -16 25"/>
+      <line x1="5" y1="-20" x2="-5" y2="20"/>
+      <path d="M 16 -25 L 34 0 L 16 25"/>
+    </g>
+    <text x="148" y="66" font-family="'SF Pro Display', 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="56" font-weight="800" fill="#f06a3c" letter-spacing="-0.5">DesignCode</text>
+    <text x="150" y="106" font-family="'SF Pro Text', 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="17" fill="#a09080" letter-spacing="0.2">Agent-powered graphic design workbench</text>
+  </g>
+</svg>

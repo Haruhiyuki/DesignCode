@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Frontend build outputs
+dist/
+coverage/
+*.tsbuildinfo
+
+# Local studio runtime data
+.designcode-studio/
+
+# Local OpenCode / developer config
+config.json
+.env
+.env.*
+*.local
+
+# Tauri / Rust build artifacts
+src-tauri/target/
+src-tauri/gen/
+src-tauri/resources/runtime/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Test outputs
+test-out.json
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
