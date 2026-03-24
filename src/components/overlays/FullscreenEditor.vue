@@ -76,6 +76,7 @@ const {
               :srcdoc="fullscreenRenderablePreviewHtml"
               @load="handleFullscreenFrameLoad"
             ></iframe>
+            <div v-if="hasDesign" class="frame-interaction-layer" aria-hidden="true"></div>
             <div
               v-if="hasDesign"
               class="fullscreen-edit-hotspots"

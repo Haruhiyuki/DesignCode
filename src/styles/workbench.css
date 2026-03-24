@@ -1442,6 +1442,12 @@ textarea:disabled {
   pointer-events: none;
 }
 
+.frame-interaction-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
 .fullscreen-edit-hotspots {
   position: absolute;
   display: block;

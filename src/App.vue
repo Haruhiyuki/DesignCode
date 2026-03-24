@@ -554,6 +554,7 @@ onBeforeUnmount(() => {
                     :srcdoc="renderablePreviewHtml"
                     @load="handleFrameLoad"
                   ></iframe>
+                  <div v-if="hasDesign" class="frame-interaction-layer" aria-hidden="true"></div>
                   <div v-else class="frame-placeholder">
                     <div class="placeholder-copy">
                       <strong>{{ t("canvas.emptyTitle1") }}</strong>
