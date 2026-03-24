@@ -13,7 +13,7 @@
     "desktop:dev": "npm run desktop:prepare-runtime && tauri dev",
     "desktop:build": "node scripts/prepare-desktop-runtime.mjs --sign && env -u APPLE_ID -u APPLE_PASSWORD -u APPLE_TEAM_ID APPLE_SIGNING_IDENTITY=- tauri build --bundles app && node scripts/fix-bundle-signatures.mjs && node scripts/package-and-notarize.mjs",
     "desktop:dev:windows": "npm run desktop:prepare-runtime && tauri dev --config src-tauri/tauri.windows.conf.json",
-    "desktop:build:windows": "node scripts/prepare-desktop-runtime.mjs && tauri build --config src-tauri/tauri.windows.conf.json --bundles nsis,updater"
+    "desktop:build:windows": "node scripts/prepare-desktop-runtime.mjs && tauri build --config src-tauri/tauri.windows.conf.json --bundles nsis && node scripts/package-windows-updater.mjs"
   },
   "dependencies": {
     "@tauri-apps/plugin-process": "^2.3.1",

@@ -50,7 +50,7 @@
       "../README.md",
       "../app/server/**/*",
       "../app/shared/**/*",
-      "resources/runtime/**/*"
+      "resources/runtime/darwin-*/**/*"
     ]
   }
 }
