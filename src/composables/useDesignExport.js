@@ -338,7 +338,8 @@ async function exportPsd() {
       doc: context.doc,
       width,
       height,
-      baseName: projectTitle.value
+      baseName: projectTitle.value,
+      scale: currentExportQuality.value.scale
     });
     result.stats = {
       ...result.stats,

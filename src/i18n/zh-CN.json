@@ -247,7 +247,7 @@
   "topbar.saved": "已保存",
   "topbar.working": "处理中",
   "topbar.download": "下载",
-  "topbar.exportQualityCaption": "PNG / PDF 画质",
+  "topbar.exportQualityCaption": "PNG / PDF / PSD 画质",
   "topbar.exportPng": "导出 PNG",
   "topbar.exportSvg": "导出 SVG",
   "topbar.exportHtml": "导出 HTML",

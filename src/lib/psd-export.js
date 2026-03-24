@@ -885,7 +885,7 @@ function createIsolationStyle(doc, cssText) {
   return style;
 }
 
-async function renderSvgStringToCanvas(svg, width, height) {
+async function renderSvgStringToCanvas(svg, width, height, scale = 1) {
   const normalizedSvg = String(svg || "").replace(/^\s*<\?xml[^>]*>\s*/i, "");
   const blob = new Blob([normalizedSvg], { type: "image/svg+xml;charset=utf-8" });
   const objectUrl = URL.createObjectURL(blob);
@@ -894,6 +894,8 @@ async function renderSvgStringToCanvas(svg, width, height) {
   const base64Url = base64 ? `data:image/svg+xml;base64,${base64}` : "";
   const sources = [objectUrl, dataUrl, base64Url].filter(Boolean);
   let lastError = null;
+  const scaledWidth = Math.round(width * scale);
+  const scaledHeight = Math.round(height * scale);
 
   try {
     for (const source of sources) {
@@ -910,12 +912,12 @@ async function renderSvgStringToCanvas(svg, width, height) {
           await image.decode().catch(() => undefined);
         }
 
-        const canvas = ensureCanvas(width, height);
+        const canvas = ensureCanvas(scaledWidth, scaledHeight);
         const context = canvas.getContext("2d", { alpha: true });
         if (!context) {
           throw new Error("PSD 画布上下文不可用。");
         }
-        context.drawImage(image, 0, 0, width, height);
+        context.drawImage(image, 0, 0, scaledWidth, scaledHeight);
         return canvas;
       } catch (error) {
         lastError = error;
@@ -928,11 +930,11 @@ async function renderSvgStringToCanvas(svg, width, height) {
   }
 }
 
-async function renderBodyCanvas(doc, width, height) {
+async function renderBodyCanvas(doc, width, height, scale = 1) {
   return renderNodeToCanvas(doc.body, {
     cacheBust: false,
     skipAutoScale: true,
-    pixelRatio: 1,
+    pixelRatio: scale,
     width,
     height,
     canvasWidth: width,
@@ -940,7 +942,7 @@ async function renderBodyCanvas(doc, width, height) {
   });
 }
 
-async function captureBackgroundLayer(doc, width, height) {
+async function captureBackgroundLayer(doc, width, height, scale = 1) {
   const style = createIsolationStyle(
     doc,
     `
@@ -949,7 +951,7 @@ async function captureBackgroundLayer(doc, width, height) {
   );
 
   try {
-    return await renderBodyCanvas(doc, width, height);
+    return await renderBodyCanvas(doc, width, height, scale);
   } finally {
     style.remove();
   }
@@ -989,7 +991,7 @@ function collectDocumentStyleText(doc) {
     .join("\n");
 }
 
-async function captureIsolatedSvgLayer(doc, target, width, height) {
+async function captureIsolatedSvgLayer(doc, target, width, height, scale = 1) {
   const rootSvg = target.closest("svg");
   if (!rootSvg) {
     throw new Error("SVG 图层目标无效。");
@@ -1053,12 +1055,12 @@ async function captureIsolatedSvgLayer(doc, target, width, height) {
   outerSvg.appendChild(clone);
 
   const svgText = new XMLSerializer().serializeToString(outerSvg);
-  return renderSvgStringToCanvas(svgText, width, height);
+  return renderSvgStringToCanvas(svgText, width, height, scale);
 }
 
-async function captureIsolatedElementLayer(doc, target, width, height, mode = "subtree") {
+async function captureIsolatedElementLayer(doc, target, width, height, mode = "subtree", scale = 1) {
   if (mode === "svg-fragment" || mode === "svg-root") {
-    return captureIsolatedSvgLayer(doc, target, width, height);
+    return captureIsolatedSvgLayer(doc, target, width, height, scale);
   }
 
   const path = [];
@@ -1130,7 +1132,7 @@ async function captureIsolatedElementLayer(doc, target, width, height, mode = "s
   );
 
   try {
-    return await renderBodyCanvas(doc, width, height);
+    return await renderBodyCanvas(doc, width, height, scale);
   } finally {
     style.remove();
     target.removeAttribute("data-psd-target");
@@ -1285,30 +1287,34 @@ export async function exportDocumentAsPsd({
   doc,
   width,
   height,
-  baseName = "designcode-export"
+  baseName = "designcode-export",
+  scale = 1
 }) {
   if (!doc || !width || !height) {
     throw new Error("当前没有可导出的 PSD 画布。");
   }
 
-  const baseCanvas = await renderBodyCanvas(doc, width, height);
+  const sw = Math.round(width * scale);
+  const sh = Math.round(height * scale);
+
+  const baseCanvas = await renderBodyCanvas(doc, width, height, scale);
   const baseTrimmed = {
     canvas: baseCanvas,
     left: 0,
     top: 0,
-    right: width,
-    bottom: height,
+    right: sw,
+    bottom: sh,
     name: "Composite"
   };
 
-  const backgroundCanvas = await captureBackgroundLayer(doc, width, height);
+  const backgroundCanvas = await captureBackgroundLayer(doc, width, height, scale);
   const backgroundLayer = hasVisiblePixels(backgroundCanvas)
     ? {
         canvas: backgroundCanvas,
         left: 0,
         top: 0,
-        right: width,
-        bottom: height,
+        right: sw,
+        bottom: sh,
         name: "Canvas background"
       }
     : null;
@@ -1320,7 +1326,7 @@ export async function exportDocumentAsPsd({
   try {
     for (const candidate of candidates) {
       try {
-        const fullCanvas = await captureIsolatedElementLayer(doc, candidate.element, width, height, candidate.mode);
+        const fullCanvas = await captureIsolatedElementLayer(doc, candidate.element, width, height, candidate.mode, scale);
         if (!hasVisiblePixels(fullCanvas)) continue;
         const trimmed = trimCanvas(fullCanvas);
         isolatedLayers.push({
@@ -1328,8 +1334,8 @@ export async function exportDocumentAsPsd({
           canvas: trimmed?.canvas || fullCanvas,
           left: trimmed?.left ?? 0,
           top: trimmed?.top ?? 0,
-          right: trimmed?.right ?? width,
-          bottom: trimmed?.bottom ?? height,
+          right: trimmed?.right ?? sw,
+          bottom: trimmed?.bottom ?? sh,
           name: candidate.name,
           mode: candidate.mode,
           visibleBounds: trimmed,
@@ -1370,14 +1376,14 @@ export async function exportDocumentAsPsd({
 
   const finalCanvas =
     psdLayers.length
-      ? composePsdPreviewCanvas(width, height, psdLayers)
+      ? composePsdPreviewCanvas(sw, sh, psdLayers)
       : baseCanvas;
   const ratio = diffRatio(baseCanvas, finalCanvas);
 
   const buffer = writePsd(
     {
-      width,
-      height,
+      width: sw,
+      height: sh,
       canvas: finalCanvas,
       children: psdLayers
     },

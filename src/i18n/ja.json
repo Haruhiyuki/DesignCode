@@ -247,7 +247,7 @@
   "topbar.saved": "保存済み",
   "topbar.working": "処理中",
   "topbar.download": "ダウンロード",
-  "topbar.exportQualityCaption": "PNG / PDF 画質",
+  "topbar.exportQualityCaption": "PNG / PDF / PSD 画質",
   "topbar.exportPng": "PNG エクスポート",
   "topbar.exportSvg": "SVG エクスポート",
   "topbar.exportHtml": "HTML エクスポート",
