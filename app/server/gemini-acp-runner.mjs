@@ -492,6 +492,9 @@ class GeminiAcpRunner {
   async startAgent() {
     const args = [...(this.payload.launchArgs || []), "--acp"];
     const env = buildGeminiChildEnv();
+    if (this.payload.mode !== "auth") {
+      env.NO_BROWSER = "1";
+    }
     this.agentProcess = spawn(this.payload.launchProgram, args, {
       cwd: this.payload.cwd,
       env,
