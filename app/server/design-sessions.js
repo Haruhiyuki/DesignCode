@@ -609,7 +609,7 @@ async function buildCommits(rootDir, designId) {
   const cwd = designDir(rootDir, designId);
   const result = await runGit(
     cwd,
-    ["log", "--pretty=format:%H\t%s\t%cI", "--", DESIGN_FILE, PROJECT_FILE, CHAT_FILE, ART_ASSET_MANIFEST_FILE],
+    ["log", "--pretty=format:%H\t%s\t%cI", "--", DESIGN_FILE],
     true
   );
 
