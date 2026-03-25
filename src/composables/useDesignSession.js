@@ -576,6 +576,7 @@ function applyOpenedDesignRecord(record, options = {}) {
     state.agent.claudeSessionId = state.design.runtimeSessions.claude || null;
     state.agent.geminiSessionId = state.design.runtimeSessions.gemini || null;
     state.design.chat = record.chat || [];
+    state.agent.streamBlocks = [];
     syncVersionsFromCommits(record.commits || [], options.activeCommitHash);
 
     state.currentHtml = record.html || "";
