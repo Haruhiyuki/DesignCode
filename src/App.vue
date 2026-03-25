@@ -77,7 +77,7 @@ const {
   runtimeBackendDisplayName, normalizeGeminiModelValue,
   conversationAgentOutputText, workspaceStateLabel, workspaceHint,
   providerLabel, versionMetaLabel, successNotice,
-  activeDrawerTab, drawerShellStyle,
+  activeDrawerTab, workspaceStyle, drawerShellStyle,
   runtimeModeLabel, nodeRuntimeLabel,
   opencodeInstallLabel, codexInstallLabel, claudeInstallLabel, geminiInstallLabel,
   opencodeSessionLabel, codexSessionLabel, claudeSessionLabel, geminiSessionLabel,
@@ -517,7 +517,7 @@ onBeforeUnmount(() => {
     <div class="workbench-frame">
       <TopBar />
 
-      <main ref="workspaceRef" class="studio-workspace">
+      <main ref="workspaceRef" class="studio-workspace" :style="workspaceStyle">
         <ToolRail />
 
         <section class="canvas-stack">

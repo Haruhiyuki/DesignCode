@@ -549,6 +549,10 @@ const successNotice = computed(() => {
 
 const activeDrawerTab = computed(() => drawerTabs.value.find((item) => item.id === ui.activeDrawer) || drawerTabs.value[0]);
 
+const workspaceStyle = computed(() => ({
+  "--drawer-shell-width": ui.drawerOpen ? `${ui.drawerWidth}px` : "0px"
+}));
+
 const drawerShellStyle = computed(() => ({
   width: `${ui.drawerWidth}px`,
   "--drawer-shell-width": `${ui.drawerWidth}px`
@@ -1633,6 +1637,7 @@ export function useSetupConfig() {
     versionMetaLabel,
     successNotice,
     activeDrawerTab,
+    workspaceStyle,
     drawerShellStyle,
     runtimeModeLabel,
     nodeRuntimeLabel,

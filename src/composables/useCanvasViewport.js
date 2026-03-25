@@ -171,6 +171,10 @@ function fitCanvas() {
     viewportWidth = viewportHeight * A4_VIEWPORT_RATIO;
   }
 
+  if (!ui.drawerOpen) {
+    viewportWidth = availableWidth;
+  }
+
   viewportEl.style.width = `${viewportWidth}px`;
   viewportEl.style.height = `${viewportHeight}px`;
 
@@ -358,14 +362,17 @@ function startCanvasPan(event) {
 function selectDrawer(id) {
   ui.activeDrawer = id;
   ui.drawerOpen = true;
+  nextTick(() => fitCanvas());
 }
 
 function toggleDrawerVisibility() {
   ui.drawerOpen = !ui.drawerOpen;
+  nextTick(() => fitCanvas());
 }
 
 function closeDrawer() {
   ui.drawerOpen = false;
+  nextTick(() => fitCanvas());
 }
 
 function startDrawerResize(event) {
