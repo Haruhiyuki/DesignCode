@@ -207,9 +207,7 @@ export function editableTextEntriesFromHtml(html) {
   }
 
   const doc = new DOMParser().parseFromString(html, "text/html");
-  const explicit = [...doc.querySelectorAll("[data-editable]")].filter((element) =>
-    Boolean(normalizeEditableText(element.textContent || ""))
-  );
+  const explicit = [...doc.querySelectorAll("[data-editable]")];
   const source = explicit.length ? "editable" : "fallback";
   const elements = explicit.length
     ? explicit
