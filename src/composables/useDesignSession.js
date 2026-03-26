@@ -187,6 +187,10 @@ function handleHeaderTitleInput(event) {
 }
 
 async function handleHeaderTitleKeydown(event) {
+  if (event.isComposing || event.keyCode === 229) {
+    return;
+  }
+
   if (event.key === "Enter") {
     event.preventDefault();
     await commitHeaderTitleEdit();
@@ -1041,7 +1045,7 @@ function submitConversation() {
 }
 
 function handleComposerKeydown(event) {
-  if (event.isComposing) {
+  if (event.isComposing || event.keyCode === 229) {
     return;
   }
 
