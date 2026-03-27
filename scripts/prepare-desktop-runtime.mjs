@@ -598,71 +598,6 @@ async function copyDirectory(sourcePath, destinationPath) {
   return shouldCopy;
 }
 
-async function pruneGeminiPackage(packageDir) {
-  const nodeModules = path.join(packageDir, "node_modules");
-  if (!existsSync(nodeModules)) {
-    return;
-  }
-
-  let removedBytes = 0;
-
-  async function removeGlob(dir, testFn) {
-    if (!existsSync(dir)) return;
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        if (testFn(entry.name, true)) {
-          const size = dirSize(full);
-          await rm(full, { recursive: true, force: true });
-          removedBytes += size;
-        } else {
-          await removeGlob(full, testFn);
-        }
-      } else if (testFn(entry.name, false)) {
-        try {
-          const s = statSync(full).size;
-          await rm(full, { force: true });
-          removedBytes += s;
-        } catch {}
-      }
-    }
-  }
-
-  function dirSize(dir) {
-    let total = 0;
-    try {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          total += dirSize(full);
-        } else {
-          try { total += statSync(full).size; } catch {}
-        }
-      }
-    } catch {}
-    return total;
-  }
-
-  // 1. 删除 @opentelemetry 中的 ESM/ESNEXT 重复构建（~73MB）
-  const otelDir = path.join(nodeModules, "@opentelemetry");
-  if (existsSync(otelDir)) {
-    await removeGlob(otelDir, (name, isDir) => isDir && (name === "esm" || name === "esnext"));
-  }
-
-  // 2. 删除 .map 源码映射文件（~35MB）
-  await removeGlob(nodeModules, (name, isDir) => !isDir && name.endsWith(".map"));
-
-  // 3. 删除 .d.ts 类型声明（~10MB）
-  await removeGlob(nodeModules, (name, isDir) => !isDir && name.endsWith(".d.ts"));
-
-  // 4. 删除文档和元数据文件
-  await removeGlob(nodeModules, (name, isDir) => !isDir && /^(CHANGELOG|HISTORY|CHANGES|AUTHORS|CONTRIBUTORS)(\..*)?$/i.test(name));
-  await removeGlob(nodeModules, (name, isDir) => !isDir && /^readme(\..+)?$/i.test(name));
-
-  const mb = (removedBytes / 1024 / 1024).toFixed(1);
-  console.log(`  Pruned Gemini node_modules: removed ${mb} MB of unnecessary files.`);
-}
-
 async function removeIfExists(targetPath) {
   if (!targetPath) {
     return;
@@ -837,10 +772,7 @@ async function main() {
         ? Promise.all([
             removeIfExists(geminiDestination),
             copyDirectory(geminiPackageRoot, geminiPackageDestination)
-          ]).then(async ([, copied]) => {
-            await pruneGeminiPackage(geminiPackageDestination);
-            return copied;
-          })
+          ]).then(([, copied]) => copied)
         : Promise.resolve(false)
   ]);
 
