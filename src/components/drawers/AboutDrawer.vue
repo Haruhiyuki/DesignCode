@@ -13,7 +13,7 @@ const { updateState, doCheckForUpdates, doInstallUpdate, doRelaunch, openUpdateU
     <div class="about-hero">
       <img class="about-logo-img" src="/src-tauri/icons/128x128.png" alt="DesignCode" />
       <h3 class="about-name">DesignCode</h3>
-      <p class="about-version">v{{ updateState.result?.currentVersion || '1.0.0' }}</p>
+      <p class="about-version">v{{ updateState.result?.currentVersion || '1.0.2' }}</p>
       <p class="about-tagline">{{ t("about.tagline") }}</p>
     </div>
 
