@@ -210,11 +210,71 @@ async function createExportFrameContext() {
   };
 }
 
+function prepareExportShadows(doc) {
+  const view = doc.defaultView;
+  if (!view) return;
+
+  for (const el of doc.querySelectorAll("*")) {
+    const computed = view.getComputedStyle(el);
+    const raw = computed.boxShadow;
+    if (!raw || raw === "none") continue;
+
+    // 按逗号拆分多重阴影（跳过括号内的逗号）
+    const shadows = [];
+    let depth = 0;
+    let start = 0;
+    for (let i = 0; i < raw.length; i++) {
+      if (raw[i] === "(") depth++;
+      else if (raw[i] === ")") depth--;
+      else if (raw[i] === "," && depth === 0) {
+        shadows.push(raw.slice(start, i).trim());
+        start = i + 1;
+      }
+    }
+    shadows.push(raw.slice(start).trim());
+
+    const dropFilters = [];
+    const kept = [];
+
+    for (const s of shadows) {
+      if (!s) continue;
+      // inset 阴影无法用 drop-shadow 表示，保留为 box-shadow
+      if (/\binset\b/.test(s)) {
+        kept.push(s);
+        continue;
+      }
+      // 计算样式格式：rgba(r,g,b,a) Xpx Ypx BlurPx [SpreadPx]
+      const m = s.match(
+        /^(rgba?\([^)]*\))\s+([-\d.]+px)\s+([-\d.]+px)\s+([-\d.]+px)(?:\s+([-\d.]+px))?$/
+      );
+      if (!m) {
+        kept.push(s);
+        continue;
+      }
+      // drop-shadow 不支持 spread，有非零 spread 时保留为 box-shadow
+      const spread = m[5] || "0px";
+      if (spread !== "0px") {
+        kept.push(s);
+        continue;
+      }
+      dropFilters.push(`drop-shadow(${m[2]} ${m[3]} ${m[4]} ${m[1]})`);
+    }
+
+    if (dropFilters.length === 0) continue;
+
+    el.style.boxShadow = kept.length > 0 ? kept.join(", ") : "none";
+    const baseFilter =
+      computed.filter !== "none" ? computed.filter + " " : "";
+    el.style.filter = baseFilter + dropFilters.join(" ");
+  }
+}
+
 async function renderPreviewBlob(scale = 1) {
   const context = await createExportFrameContext();
   try {
     const width = renderedCanvas.value.width;
     const height = renderedCanvas.value.height;
+    prepareExportShadows(context.doc);
     const svg = buildSvgSnapshot(context.doc, width, height);
 
     try {
