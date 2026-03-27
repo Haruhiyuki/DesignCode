@@ -269,35 +269,90 @@ function prepareExportShadows(doc) {
   }
 }
 
+async function flattenInlineSvgs(doc, scale = 1) {
+  const svgs = [...doc.querySelectorAll("body svg")];
+  if (svgs.length === 0) return;
+
+  const styleText = [...doc.querySelectorAll("style")]
+    .map((s) => s.textContent || "")
+    .filter(Boolean)
+    .join("\n");
+
+  for (const svg of svgs) {
+    const rect = svg.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) continue;
+
+    const clone = svg.cloneNode(true);
+    clone.removeAttribute("class");
+    clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    clone.setAttribute("width", String(rect.width));
+    clone.setAttribute("height", String(rect.height));
+
+    if (styleText) {
+      const styleEl = doc.createElementNS("http://www.w3.org/2000/svg", "style");
+      styleEl.textContent = styleText;
+      clone.insertBefore(styleEl, clone.firstChild);
+    }
+
+    const svgStr = new XMLSerializer().serializeToString(clone);
+    const b64 = btoa(unescape(encodeURIComponent(svgStr)));
+
+    const tempImg = new Image();
+    try {
+      await new Promise((resolve, reject) => {
+        tempImg.onload = resolve;
+        tempImg.onerror = reject;
+        tempImg.src = `data:image/svg+xml;base64,${b64}`;
+      });
+      if (typeof tempImg.decode === "function") {
+        await tempImg.decode().catch(() => undefined);
+      }
+    } catch {
+      continue;
+    }
+
+    const rasterScale = Math.max(scale, 1);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(rect.width * rasterScale);
+    canvas.height = Math.round(rect.height * rasterScale);
+    const ctx = canvas.getContext("2d", { alpha: true });
+    ctx.drawImage(tempImg, 0, 0, canvas.width, canvas.height);
+
+    const img = doc.createElement("img");
+    img.src = canvas.toDataURL("image/png");
+    if (svg.hasAttribute("class")) img.setAttribute("class", svg.getAttribute("class"));
+    for (const attr of svg.attributes) {
+      if (attr.name.startsWith("data-")) img.setAttribute(attr.name, attr.value);
+    }
+    img.style.display = "block";
+    svg.parentNode.replaceChild(img, svg);
+  }
+}
+
 async function renderPreviewBlob(scale = 1) {
   const context = await createExportFrameContext();
   try {
     const width = renderedCanvas.value.width;
     const height = renderedCanvas.value.height;
     prepareExportShadows(context.doc);
-    const svg = buildSvgSnapshot(context.doc, width, height);
+    await flattenInlineSvgs(context.doc, scale);
+    await primeExportFrame(context.doc);
 
-    try {
-      await warmUpExportSnapshot(svg, width, height);
-      return await renderSvgStringToBlob(svg, width, height, scale);
-    } catch {
-      const exportNode = context.doc.body;
-      const blob = await renderNodeToBlob(exportNode, {
-        cacheBust: false,
-        pixelRatio: scale,
-        skipAutoScale: true,
-        width,
-        height,
-        canvasWidth: Math.round(width * scale),
-        canvasHeight: Math.round(height * scale)
-      });
+    const blob = await renderNodeToBlob(context.doc.body, {
+      cacheBust: false,
+      pixelRatio: scale,
+      skipAutoScale: true,
+      width,
+      height,
+      canvasWidth: Math.round(width * scale),
+      canvasHeight: Math.round(height * scale)
+    });
 
-      if (!blob) {
-        throw new Error("Export render failed.");
-      }
-
-      return blob;
+    if (!blob) {
+      throw new Error("Export render failed.");
     }
+
+    return blob;
   } finally {
     context.dispose();
   }
@@ -394,6 +449,7 @@ async function exportPsd() {
 
     setStatus(t("status.psdExporting"), "running", "export");
     context = await createExportFrameContext();
+    prepareExportShadows(context.doc);
     const result = await exportDocumentAsPsd({
       doc: context.doc,
       width,
