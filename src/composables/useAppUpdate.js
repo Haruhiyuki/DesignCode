@@ -27,7 +27,7 @@ async function doCheckForUpdates(proxyValue) {
     updateState.lastChecked = Date.now();
   } catch (e) {
     updateState.result = {
-      currentVersion: "1.0.2",
+      currentVersion: "1.0.3",
       updateAvailable: false,
       checkError: e.message || String(e)
     };

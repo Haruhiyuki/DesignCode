@@ -8,7 +8,7 @@
 
 
 
-<a href="https://github.com/haruhiyuki/DesignCode/releases/latest"><img src="https://img.shields.io/badge/release-1.0.2-blue" alt="version" /></a>
+<a href="https://github.com/haruhiyuki/DesignCode/releases/latest"><img src="https://img.shields.io/badge/release-1.0.3-blue" alt="version" /></a>
 <a href="https://github.com/haruhiyuki/DesignCode/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-green" alt="license" /></a>
 <a href="https://v2.tauri.app"><img src="https://img.shields.io/badge/tauri-v2.0-orange" alt="tauri" /></a>
 <a href="https://vuejs.org"><img src="https://img.shields.io/badge/vue-3-green" alt="vue" /></a>
