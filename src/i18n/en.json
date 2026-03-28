@@ -440,6 +440,7 @@
   "runtime.opencode.baseUrlPlaceholder": "Leave empty to use the official default endpoint",
   "runtime.opencode.providerApiKey": "Current Provider API Key",
   "runtime.opencode.apiKeyPlaceholder": "Leave empty to skip writing the apiKey",
+  "runtime.opencode.apiKeyPlaceholderSaved": "Saved locally. Leave empty to keep the current key",
   "runtime.opencode.currentModel": "Current Model Config",
   "runtime.opencode.currentSmallModel": "Current small_model",
   "runtime.opencode.saveConfig": "Save OpenCode Config",
@@ -482,6 +483,7 @@
   "runtime.model.baseUrlDefault": "{provider} baseURL: Using official default endpoint",
   "runtime.model.baseUrlCustom": "{provider} baseURL: {url}",
   "runtime.model.apiKeyWritten": "{provider} API Key: Written",
+  "runtime.model.apiKeyReused": "{provider} API Key: Reused saved key",
   "runtime.model.apiKeyNotWritten": "{provider} API Key: Not written",
 
   "runtime.shell.notShellHint1": "Shell only executes real terminal commands.",

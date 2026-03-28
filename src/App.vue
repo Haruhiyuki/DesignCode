@@ -280,6 +280,7 @@ watch(
       state.agent.modelId = "";
       state.agent.opencodeProviderBaseUrl = "";
       state.agent.opencodeProviderApiKey = "";
+      state.agent.opencodeProviderApiKeySaved = false;
       return;
     }
 
@@ -297,8 +298,7 @@ watch(
       return;
     }
 
-    const fallback = state.agent.providerDefaults[providerId];
-    state.agent.modelId = models.includes(fallback) ? fallback : models[0];
+    syncRuntimeModelSelection();
     syncOpenCodeProviderBaseUrl(providerId);
     syncOpenCodeProviderApiKey(providerId);
   }

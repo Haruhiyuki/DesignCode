@@ -440,6 +440,7 @@
   "runtime.opencode.baseUrlPlaceholder": "留空时使用官方默认端点",
   "runtime.opencode.providerApiKey": "当前 Provider API Key",
   "runtime.opencode.apiKeyPlaceholder": "留空时不写入 apiKey",
+  "runtime.opencode.apiKeyPlaceholderSaved": "已安全缓存上次使用的key",
   "runtime.opencode.currentModel": "当前模型配置",
   "runtime.opencode.currentSmallModel": "当前 small_model",
   "runtime.opencode.saveConfig": "保存 OpenCode 配置",
@@ -482,6 +483,7 @@
   "runtime.model.baseUrlDefault": "{provider} baseURL：使用官方默认端点",
   "runtime.model.baseUrlCustom": "{provider} baseURL：{url}",
   "runtime.model.apiKeyWritten": "{provider} API Key：已写入",
+  "runtime.model.apiKeyReused": "{provider} API Key：沿用已保存 key",
   "runtime.model.apiKeyNotWritten": "{provider} API Key：未写入",
 
   "runtime.shell.notShellHint1": "Shell 只执行真实终端命令。",

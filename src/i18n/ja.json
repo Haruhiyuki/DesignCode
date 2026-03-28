@@ -440,6 +440,7 @@
   "runtime.opencode.baseUrlPlaceholder": "空欄の場合は公式デフォルトエンドポイントを使用",
   "runtime.opencode.providerApiKey": "現在のプロバイダー API Key",
   "runtime.opencode.apiKeyPlaceholder": "空欄の場合は apiKey を書き込みません",
+  "runtime.opencode.apiKeyPlaceholderSaved": "ローカルに保存済みです。空欄のままで現在のキーを維持します",
   "runtime.opencode.currentModel": "現在のモデル設定",
   "runtime.opencode.currentSmallModel": "現在の small_model",
   "runtime.opencode.saveConfig": "OpenCode 設定を保存",
@@ -482,6 +483,7 @@
   "runtime.model.baseUrlDefault": "{provider} baseURL：公式デフォルトエンドポイントを使用",
   "runtime.model.baseUrlCustom": "{provider} baseURL：{url}",
   "runtime.model.apiKeyWritten": "{provider} API Key：書き込み済み",
+  "runtime.model.apiKeyReused": "{provider} API Key：保存済みキーを再利用",
   "runtime.model.apiKeyNotWritten": "{provider} API Key：未書き込み",
 
   "runtime.shell.notShellHint1": "シェルは実際のターミナルコマンドのみ実行します。",

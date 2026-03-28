@@ -68,6 +68,7 @@ const state = reactive({
     opencodeSmallModelId: "",
     opencodeProviderBaseUrl: "",
     opencodeProviderApiKey: "",
+    opencodeProviderApiKeySaved: false,
     opencodeConfig: null,
     codexInstalled: false,
     codexVersion: null,

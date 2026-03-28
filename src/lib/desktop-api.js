@@ -580,6 +580,22 @@ export async function updateOpencodeConfig({ payload, directory }) {
   });
 }
 
+export async function getOpencodePreferences() {
+  return invoke("opencode_preferences_get");
+}
+
+export async function updateOpencodePreferences(payload) {
+  return invoke("opencode_preferences_update", {
+    payload
+  });
+}
+
+export async function getOpencodeStoredApiKey(providerId) {
+  return invoke("opencode_provider_secret_get", {
+    providerId
+  });
+}
+
 export async function sendOpencodePrompt({ sessionId, agent, text, system, directory, streamId }) {
   return invoke("opencode_send_prompt", {
     sessionId,

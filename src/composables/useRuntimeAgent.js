@@ -10,7 +10,9 @@ import {
   getGeminiStatus,
   getOpencodeConfig,
   getOpencodeConfigProviders,
+  getOpencodePreferences,
   getOpencodeStatus,
+  getOpencodeStoredApiKey,
   listClaudeModels,
   listCodexModels,
   listGeminiModels,
@@ -31,6 +33,7 @@ import {
   syncDesignWorkspace as syncDesignWorkspaceSnapshot,
   updateCodexSettings,
   updateOpencodeConfig,
+  updateOpencodePreferences,
   verifyClaude,
   verifyCodex,
   verifyGemini,
@@ -102,6 +105,7 @@ const {
 let providerAuthPollToken = 0;
 let opencodeAutoStartAttempted = false;
 let opencodeAutoStartSuppressed = false;
+let opencodePreferenceCache = createEmptyOpencodePreferenceSnapshot();
 
 // ---------------------------------------------------------------------------
 // 辅助函数 — sleep
@@ -109,6 +113,91 @@ let opencodeAutoStartSuppressed = false;
 
 function sleep(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function createEmptyOpencodePreferenceSnapshot() {
+  return {
+    selectedProviderId: "",
+    selectedModelId: "",
+    smallModelId: "",
+    providers: {}
+  };
+}
+
+function normalizeOpencodePreferenceSnapshot(value) {
+  const snapshot = createEmptyOpencodePreferenceSnapshot();
+  if (!value || typeof value !== "object") {
+    return snapshot;
+  }
+
+  snapshot.selectedProviderId = String(value.selectedProviderId || "").trim();
+  snapshot.selectedModelId = String(value.selectedModelId || "").trim();
+  snapshot.smallModelId = String(value.smallModelId || "").trim();
+
+  const providers = value.providers && typeof value.providers === "object"
+    ? value.providers
+    : {};
+  snapshot.providers = Object.fromEntries(
+    Object.entries(providers)
+      .map(([providerId, providerValue]) => {
+        const normalizedProviderId = String(providerId || "").trim();
+        if (!normalizedProviderId || !providerValue || typeof providerValue !== "object") {
+          return null;
+        }
+        return [normalizedProviderId, {
+          modelId: String(providerValue.modelId || "").trim(),
+          baseUrl: String(providerValue.baseUrl || "").trim(),
+          hasApiKey: Boolean(providerValue.hasApiKey)
+        }];
+      })
+      .filter(Boolean)
+  );
+
+  return snapshot;
+}
+
+function getStoredOpencodeProviderState(providerId) {
+  const normalizedProviderId = String(providerId || "").trim();
+  if (!normalizedProviderId) {
+    return null;
+  }
+  return opencodePreferenceCache.providers[normalizedProviderId] || null;
+}
+
+function applyOpencodePreferenceSnapshot(snapshot) {
+  opencodePreferenceCache = normalizeOpencodePreferenceSnapshot(snapshot);
+
+  if (!state.agent.providerId && opencodePreferenceCache.selectedProviderId) {
+    state.agent.providerId = opencodePreferenceCache.selectedProviderId;
+  }
+
+  if (!state.agent.modelId && opencodePreferenceCache.selectedModelId) {
+    state.agent.modelId = opencodePreferenceCache.selectedModelId;
+  }
+
+  if (!state.agent.opencodeSmallModelId && opencodePreferenceCache.smallModelId) {
+    state.agent.opencodeSmallModelId = opencodePreferenceCache.smallModelId;
+  }
+
+  syncOpenCodeProviderBaseUrl(state.agent.providerId);
+  syncOpenCodeProviderApiKey(state.agent.providerId);
+}
+
+async function loadOpencodePreferenceSnapshot() {
+  if (!state.desktop.isDesktop) {
+    return opencodePreferenceCache;
+  }
+
+  try {
+    const snapshot = await getOpencodePreferences();
+    applyOpencodePreferenceSnapshot(snapshot);
+  } catch (error) {
+    appendAgentOutputEntry(
+      t("runtime.refresh.providerFailed", { error: error instanceof Error ? error.message : String(error) })
+    );
+  }
+
+  return opencodePreferenceCache;
 }
 
 function formatOpencodeMessagesForConsole(messages) {
@@ -342,9 +431,14 @@ function syncRuntimeModelSelection() {
   }
 
   const configured = inferConfiguredModelParts(state.agent.configModel);
+  const preferredFromPrefs =
+    providerIds.includes(opencodePreferenceCache.selectedProviderId)
+      ? opencodePreferenceCache.selectedProviderId
+      : "";
   const preferredProvider =
     (providerIds.includes(state.agent.providerId) && state.agent.providerId) ||
     (providerIds.includes(configured.providerId) && configured.providerId) ||
+    preferredFromPrefs ||
     (providerIds.includes("openai") && "openai") ||
     state.agent.connectedProviders.find((providerId) => providerIds.includes(providerId)) ||
     providerIds[0];
@@ -361,9 +455,11 @@ function syncRuntimeModelSelection() {
     configured.providerId === preferredProvider && modelIds.includes(configured.modelId)
       ? configured.modelId
       : "";
+  const storedModel = getStoredOpencodeProviderState(preferredProvider)?.modelId || "";
   const defaultModel = state.agent.providerDefaults[preferredProvider];
   state.agent.modelId =
     configuredModel ||
+    (modelIds.includes(storedModel) ? storedModel : "") ||
     (modelIds.includes(defaultModel) ? defaultModel : "") ||
     state.agent.modelId ||
     modelIds[0];
@@ -382,19 +478,34 @@ function syncOpenCodeSmallModelSelection() {
     return;
   }
 
+  if (
+    opencodePreferenceCache.smallModelId
+    && optionIds.has(opencodePreferenceCache.smallModelId)
+  ) {
+    state.agent.opencodeSmallModelId = opencodePreferenceCache.smallModelId;
+    return;
+  }
+
   state.agent.opencodeSmallModelId = "";
 }
 
 function syncOpenCodeProviderBaseUrl(providerId = state.agent.providerId) {
-  state.agent.opencodeProviderBaseUrl = providerId
-    ? readConfiguredOpenCodeProviderBaseUrl(providerId)
-    : "";
+  if (!providerId) {
+    state.agent.opencodeProviderBaseUrl = "";
+    return;
+  }
+
+  state.agent.opencodeProviderBaseUrl =
+    readConfiguredOpenCodeProviderBaseUrl(providerId)
+    || getStoredOpencodeProviderState(providerId)?.baseUrl
+    || "";
 }
 
 function syncOpenCodeProviderApiKey(providerId = state.agent.providerId) {
-  state.agent.opencodeProviderApiKey = providerId
-    ? readConfiguredOpenCodeProviderApiKey(providerId)
-    : "";
+  state.agent.opencodeProviderApiKey = "";
+  state.agent.opencodeProviderApiKeySaved = providerId
+    ? Boolean(getStoredOpencodeProviderState(providerId)?.hasApiKey || readConfiguredOpenCodeProviderApiKey(providerId))
+    : false;
 }
 
 function applyRuntimeCatalog(providerList, authMethods, configProviders, config) {
@@ -1024,6 +1135,7 @@ async function applySelectedModel() {
 
   setAgentBusy(true);
   try {
+    const currentProviderId = state.agent.providerId;
     const model = `${state.agent.providerId}/${state.agent.modelId}`;
     const nextConfig = cloneSnapshot(state.agent.opencodeConfig || {});
     nextConfig.model = model;
@@ -1038,7 +1150,14 @@ async function applySelectedModel() {
     const nextProviderConfig = cloneSnapshot(providerConfig[state.agent.providerId] || {});
     const nextProviderOptions = cloneSnapshot(nextProviderConfig.options || {});
     const trimmedBaseUrl = String(state.agent.opencodeProviderBaseUrl || "").trim();
-    const trimmedApiKey = String(state.agent.opencodeProviderApiKey || "").trim();
+    const enteredApiKey = String(state.agent.opencodeProviderApiKey || "").trim();
+    const storedApiKeyResult = !enteredApiKey && state.agent.opencodeProviderApiKeySaved
+      ? await getOpencodeStoredApiKey(currentProviderId)
+      : null;
+    const trimmedApiKey =
+      enteredApiKey
+      || String(storedApiKeyResult?.apiKey || "").trim()
+      || readConfiguredOpenCodeProviderApiKey(currentProviderId);
 
     if (trimmedBaseUrl) {
       nextProviderOptions.baseURL = trimmedBaseUrl;
@@ -1074,14 +1193,31 @@ async function applySelectedModel() {
       payload: nextConfig,
       directory: runtimeDirectory.value
     });
+    const preferenceSnapshot = await updateOpencodePreferences({
+      selectedProviderId: currentProviderId,
+      selectedModelId: state.agent.modelId,
+      smallModelId: state.agent.opencodeSmallModelId || "",
+      providerId: currentProviderId,
+      modelId: state.agent.modelId,
+      baseUrl: trimmedBaseUrl,
+      updateApiKey: Boolean(enteredApiKey),
+      apiKey: enteredApiKey
+    });
     state.agent.configModel = model;
     state.agent.configSmallModel = state.agent.opencodeSmallModelId || "";
     state.agent.opencodeConfig = cloneSnapshot(nextConfig);
+    applyOpencodePreferenceSnapshot(preferenceSnapshot);
+    state.agent.opencodeProviderApiKey = "";
+    state.agent.opencodeProviderApiKeySaved = Boolean(trimmedApiKey);
     state.agent.authResult = [
       t("runtime.model.defaultModel", { model }),
       state.agent.opencodeSmallModelId ? t("runtime.model.smallModel", { model: state.agent.opencodeSmallModelId }) : t("runtime.model.smallModelNotSet"),
       trimmedBaseUrl ? t("runtime.model.baseUrlCustom", { provider: state.agent.providerId, url: trimmedBaseUrl }) : t("runtime.model.baseUrlDefault", { provider: state.agent.providerId }),
-      trimmedApiKey ? t("runtime.model.apiKeyWritten", { provider: state.agent.providerId }) : t("runtime.model.apiKeyNotWritten", { provider: state.agent.providerId })
+      enteredApiKey
+        ? t("runtime.model.apiKeyWritten", { provider: state.agent.providerId })
+        : trimmedApiKey
+          ? t("runtime.model.apiKeyReused", { provider: state.agent.providerId })
+          : t("runtime.model.apiKeyNotWritten", { provider: state.agent.providerId })
     ].join("\n");
     await refreshDesktopIntegration();
     setStatus(t("status.opencodeConfigUpdated"), "success", "save");
@@ -1112,6 +1248,8 @@ async function refreshDesktopIntegration(options = {}) {
     if (!state.desktop.isDesktop) {
       return;
     }
+
+    await loadOpencodePreferenceSnapshot();
 
     const [
       opencodeStatusResult,

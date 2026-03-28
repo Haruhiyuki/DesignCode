@@ -1955,6 +1955,114 @@ async fn opencode_config_update(
     .await
 }
 
+#[tauri::command]
+async fn opencode_preferences_get(app: AppHandle) -> Result<Value, String> {
+    let preferences = load_opencode_preferences(&app)?;
+    let secrets = load_opencode_provider_secrets(&app)?;
+    Ok(opencode_preferences_public_value(&preferences, &secrets))
+}
+
+#[tauri::command]
+async fn opencode_preferences_update(app: AppHandle, payload: Value) -> Result<Value, String> {
+    let mut preferences = load_opencode_preferences(&app)?;
+    let mut secrets = load_opencode_provider_secrets(&app)?;
+
+    if let Some(value) = payload.get("selectedProviderId").and_then(Value::as_str) {
+        preferences.selected_provider_id = value.trim().to_string();
+    }
+    if let Some(value) = payload.get("selectedModelId").and_then(Value::as_str) {
+        preferences.selected_model_id = value.trim().to_string();
+    }
+    if let Some(value) = payload.get("smallModelId").and_then(Value::as_str) {
+        preferences.small_model_id = value.trim().to_string();
+    }
+
+    let provider_id = payload
+        .get("providerId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+
+    if let Some(provider_id) = provider_id.as_ref() {
+        let base_url = payload
+            .get("baseUrl")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let model_id = payload
+            .get("modelId")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+
+        let provider_preference = preferences
+            .providers
+            .entry(provider_id.clone())
+            .or_default();
+        provider_preference.base_url = base_url;
+        provider_preference.model_id = model_id;
+
+        if provider_preference.base_url.is_empty() && provider_preference.model_id.is_empty() {
+            preferences.providers.remove(provider_id);
+        }
+
+        if payload
+            .get("updateApiKey")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            let api_key = payload
+                .get("apiKey")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string();
+
+            if api_key.is_empty() {
+                secrets.providers.remove(provider_id);
+            } else {
+                secrets
+                    .providers
+                    .entry(provider_id.clone())
+                    .or_default()
+                    .api_key = api_key;
+            }
+        }
+    }
+
+    save_opencode_preferences(&app, &preferences)?;
+    save_opencode_provider_secrets(&app, &secrets)?;
+    Ok(opencode_preferences_public_value(&preferences, &secrets))
+}
+
+#[tauri::command]
+async fn opencode_provider_secret_get(app: AppHandle, provider_id: String) -> Result<Value, String> {
+    let provider_id = provider_id.trim().to_string();
+    if provider_id.is_empty() {
+        return Ok(json!({
+            "providerId": "",
+            "apiKey": "",
+            "hasApiKey": false
+        }));
+    }
+
+    let secrets = load_opencode_provider_secrets(&app)?;
+    let api_key = secrets
+        .providers
+        .get(&provider_id)
+        .map(|entry| entry.api_key.trim().to_string())
+        .unwrap_or_default();
+
+    Ok(json!({
+        "providerId": provider_id,
+        "apiKey": api_key,
+        "hasApiKey": !api_key.is_empty()
+    }))
+}
+
 // ── Update check ─────────────────────────────────────────────
 
 const UPDATE_CHECK_URL: &str =
@@ -2177,6 +2285,9 @@ fn main() {
             opencode_config_get,
             opencode_config_providers,
             opencode_config_update,
+            opencode_preferences_get,
+            opencode_preferences_update,
+            opencode_provider_secret_get,
             opencode_messages,
             runtime_list_approvals,
             runtime_reply_approval,

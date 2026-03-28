@@ -5,8 +5,11 @@
 use crate::types::*;
 use crate::utils::*;
 use reqwest::Method;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashMap};
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -16,6 +19,168 @@ use std::time::Duration;
 use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder};
 use tokio::sync::watch;
 use tokio::time::sleep;
+
+const OPENCODE_PREFERENCES_RELATIVE_PATH: &str = "runtime/opencode-preferences.json";
+const OPENCODE_PROVIDER_SECRETS_RELATIVE_PATH: &str = "runtime/opencode-provider-secrets.json";
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpencodeStoredProviderPreference {
+    #[serde(default)]
+    pub model_id: String,
+    #[serde(default)]
+    pub base_url: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpencodeStoredPreferences {
+    #[serde(default)]
+    pub selected_provider_id: String,
+    #[serde(default)]
+    pub selected_model_id: String,
+    #[serde(default)]
+    pub small_model_id: String,
+    #[serde(default)]
+    pub providers: HashMap<String, OpencodeStoredProviderPreference>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpencodeStoredProviderSecret {
+    #[serde(default)]
+    pub api_key: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpencodeProviderSecrets {
+    #[serde(default)]
+    pub providers: HashMap<String, OpencodeStoredProviderSecret>,
+}
+
+fn opencode_preferences_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let base = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| format!("Failed to resolve app data directory: {error}"))?;
+    Ok(base.join(OPENCODE_PREFERENCES_RELATIVE_PATH))
+}
+
+fn opencode_provider_secrets_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let base = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| format!("Failed to resolve app data directory: {error}"))?;
+    Ok(base.join(OPENCODE_PROVIDER_SECRETS_RELATIVE_PATH))
+}
+
+fn read_json_file<T>(path: &Path) -> Result<T, String>
+where
+    T: Default + for<'de> Deserialize<'de>,
+{
+    let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(T::default()),
+        Err(error) => return Err(format!("Failed to read {}: {error}", path.display())),
+    };
+
+    serde_json::from_str(&content)
+        .map_err(|error| format!("Failed to decode {}: {error}", path.display()))
+}
+
+fn write_json_file<T>(path: &Path, value: &T) -> Result<(), String>
+where
+    T: Serialize,
+{
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Failed to create {}: {error}", parent.display()))?;
+    }
+
+    let content = serde_json::to_string_pretty(value)
+        .map_err(|error| format!("Failed to encode {}: {error}", path.display()))?;
+    fs::write(path, content).map_err(|error| format!("Failed to write {}: {error}", path.display()))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let permissions = fs::Permissions::from_mode(0o600);
+        fs::set_permissions(path, permissions)
+            .map_err(|error| format!("Failed to secure {}: {error}", path.display()))?;
+    }
+
+    Ok(())
+}
+
+pub fn opencode_preferences_public_value(
+    preferences: &OpencodeStoredPreferences,
+    secrets: &OpencodeProviderSecrets,
+) -> Value {
+    let mut providers = serde_json::Map::new();
+
+    for (provider_id, provider_preference) in &preferences.providers {
+        let has_api_key = secrets
+            .providers
+            .get(provider_id)
+            .map(|secret| !secret.api_key.trim().is_empty())
+            .unwrap_or(false);
+
+        providers.insert(
+            provider_id.clone(),
+            json!({
+                "modelId": provider_preference.model_id,
+                "baseUrl": provider_preference.base_url,
+                "hasApiKey": has_api_key
+            }),
+        );
+    }
+
+    for (provider_id, provider_secret) in &secrets.providers {
+        if providers.contains_key(provider_id) || provider_secret.api_key.trim().is_empty() {
+            continue;
+        }
+
+        providers.insert(
+            provider_id.clone(),
+            json!({
+                "modelId": "",
+                "baseUrl": "",
+                "hasApiKey": true
+            }),
+        );
+    }
+
+    json!({
+        "selectedProviderId": preferences.selected_provider_id,
+        "selectedModelId": preferences.selected_model_id,
+        "smallModelId": preferences.small_model_id,
+        "providers": providers
+    })
+}
+
+pub fn load_opencode_preferences(app: &AppHandle) -> Result<OpencodeStoredPreferences, String> {
+    read_json_file(&opencode_preferences_path(app)?)
+}
+
+pub fn load_opencode_provider_secrets(app: &AppHandle) -> Result<OpencodeProviderSecrets, String> {
+    read_json_file(&opencode_provider_secrets_path(app)?)
+}
+
+pub fn save_opencode_preferences(
+    app: &AppHandle,
+    preferences: &OpencodeStoredPreferences,
+) -> Result<(), String> {
+    write_json_file(&opencode_preferences_path(app)?, preferences)
+}
+
+pub fn save_opencode_provider_secrets(
+    app: &AppHandle,
+    secrets: &OpencodeProviderSecrets,
+) -> Result<(), String> {
+    write_json_file(&opencode_provider_secrets_path(app)?, secrets)
+}
 
 // ---------------------------------------------------------------------------
 // HTTP 通信

@@ -637,7 +637,9 @@ const { openDropdown, closeDropdown } = useCanvasViewport();
                   autocomplete="off"
                   spellcheck="false"
                   :disabled="!state.desktop.isDesktop || !state.agent.running || state.agent.busy || !state.agent.providerId"
-                  :placeholder="t('runtime.opencode.apiKeyPlaceholder')"
+                  :placeholder="state.agent.opencodeProviderApiKeySaved && !state.agent.opencodeProviderApiKey
+                    ? t('runtime.opencode.apiKeyPlaceholderSaved')
+                    : t('runtime.opencode.apiKeyPlaceholder')"
                 />
               </label>
 
