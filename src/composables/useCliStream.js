@@ -349,6 +349,62 @@ function formatGeminiJsonEvent(event) {
   return eventType ? `[gemini] ${eventType}` : null;
 }
 
+function formatOpencodeJsonEvent(event) {
+  const eventType = event.type || "";
+
+  if (event.suppressLogLine) {
+    return null;
+  }
+
+  if (eventType === "opencode.text") {
+    const content = sanitizeAgentLogMessage(event.content || "");
+    return content ? `[message]\n${content}` : null;
+  }
+
+  if (eventType === "opencode.thinking") {
+    const content = sanitizeAgentLogMessage(event.content || "");
+    return content ? `[thought]\n${content}` : null;
+  }
+
+  if (eventType === "opencode.tool") {
+    const tool = event.tool || "tool";
+    const status = event.status || "running";
+    const detail = String(event.detail || "").trim();
+    const parts = [`[tool] ${tool}`];
+    if (detail) {
+      parts.push(detail);
+    }
+    if (status && status !== "completed") {
+      parts.push(status);
+    }
+    return parts.join(" · ");
+  }
+
+  if (eventType === "opencode.file") {
+    const path = event.path || "";
+    const tool = event.tool || "file";
+    const status = String(event.status || "completed").trim();
+    const detail = String(event.detail || "").trim();
+    const prefix = path ? `[${tool}] ${path}` : detail ? `[${tool}] ${detail}` : `[${tool}] updated`;
+    return status && status !== "completed" ? `${prefix} · ${status}` : prefix;
+  }
+
+  if (eventType === "opencode.error") {
+    return event.message ? `[error] ${event.message}` : "[error] OpenCode error";
+  }
+
+  if (eventType === "opencode.status") {
+    return event.message ? `[opencode] ${event.message}` : null;
+  }
+
+  if (event.message) {
+    const message = sanitizeAgentLogMessage(event.message);
+    return message ? `[opencode]\n${message}` : null;
+  }
+
+  return eventType ? `[opencode] ${eventType}` : null;
+}
+
 function sanitizeGeminiStderrLine(line) {
   const text = String(line || "").trim();
   if (!text) {
@@ -450,7 +506,11 @@ function formatCliBlockSummary(block, backend) {
     if (!content) {
       return null;
     }
-    const prefix = block.tone === "error" ? "[error]" : "[message]";
+    const prefix = block.tone === "error"
+      ? "[error]"
+      : block.tone === "file"
+        ? "[file]"
+        : "[message]";
     return `${prefix}\n${content}`;
   }
 
@@ -504,7 +564,7 @@ function formatCliStreamPayload(payload) {
     case "gemini":
       return formatGeminiJsonEvent(event);
     case "opencode":
-      return null;
+      return formatOpencodeJsonEvent(event);
     default:
       return formatCodexJsonEvent(event);
   }
@@ -659,7 +719,8 @@ async function beginCliStream(streamId, backend, suppressedBlocks = []) {
   }
 
   markConversationRuntimeScope();
-  beginAgentOutputSection();
+  state.agent.outputDesignId = currentConversationScopeKey.value;
+  state.agent.output = "";
   state.agent.streamBlocks = [];
   activeCodexSuppressedLines = buildCodexSuppressedLines(suppressedBlocks);
   geminiStderrCapacityModel = "";
@@ -743,6 +804,7 @@ export function useCliStream() {
     formatCodexJsonEvent,
     formatClaudeJsonEvent,
     formatGeminiJsonEvent,
+    formatOpencodeJsonEvent,
     sanitizeGeminiStderrLine,
     formatCliBlockSummary,
     formatCliStreamPayload,

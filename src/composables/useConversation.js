@@ -204,6 +204,117 @@ function normalizeConversationMessage(value) {
   return text;
 }
 
+function normalizeConversationCommandStatus(value, fallback = "running") {
+  const status = String(value || fallback).toLowerCase();
+  if (!status) {
+    return fallback;
+  }
+  if (status === "completed" || status === "success" || status === "done") {
+    return "success";
+  }
+  if (status === "failed" || status === "failure") {
+    return "error";
+  }
+  return status;
+}
+
+function formatConversationPath(path) {
+  const rawPath = normalizeConversationMessage(path);
+  if (!rawPath) {
+    return "";
+  }
+
+  const runtimeDirectory = String(_runtimeDirectory?.value || "").replace(/\/+$/g, "");
+  if (runtimeDirectory && rawPath.startsWith(`${runtimeDirectory}/`)) {
+    return rawPath.slice(runtimeDirectory.length + 1);
+  }
+
+  if (runtimeDirectory && rawPath === runtimeDirectory) {
+    return ".";
+  }
+
+  return rawPath;
+}
+
+function unwrapConversationMarker(value) {
+  return String(value || "")
+    .replace(/^[·•\s]+/gu, "")
+    .replace(/[·•\s]+$/gu, "")
+    .trim();
+}
+
+function isOpencodeThoughtMarkerLine(value) {
+  const text = unwrapConversationMarker(value)
+    .replace(/^[\[\(（【<\s]+/u, "")
+    .replace(/[\]\)）】>\s]+$/u, "")
+    .trim();
+
+  if (!text) {
+    return true;
+  }
+
+  return /^(thinking|thought|reasoning|analyzing|analysis)(?:\s*[.。…]+)?$/iu.test(text)
+    || /^(思考中|思考|推理中|推理|分析中|分析)(?:\s*[.。…]+)?$/u.test(text);
+}
+
+function sanitizeOpencodeThoughtContent(value) {
+  const text = normalizeConversationMessage(value);
+  if (!text) {
+    return "";
+  }
+
+  return text
+    .split("\n")
+    .map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        return "";
+      }
+
+      const withoutLeadingMarker = trimmed
+        .replace(
+          /^(?:[·•\s]*)?(?:thinking|thought|reasoning|analyzing|analysis|思考中|思考|推理中|推理|分析中|分析)(?:\s*[.。…]+)?(?:[·•\s:：-]*)/iu,
+          ""
+        )
+        .trim();
+
+      if (isOpencodeThoughtMarkerLine(trimmed) || isOpencodeThoughtMarkerLine(withoutLeadingMarker)) {
+        return "";
+      }
+
+      return withoutLeadingMarker || trimmed;
+    })
+    .filter((line, index, lines) => line || (index > 0 && lines[index - 1]))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function formatOpencodeToolCommand(source = {}) {
+  const tool = pickFirstText(source.tool, source.name) || "tool";
+  const command = pickFirstText(source.command, source.commandLine, source.argv, source.args);
+  if (command) {
+    return command;
+  }
+
+  const path = formatConversationPath(
+    pickFirstText(source.path, source.filePath, source.file_path)
+  );
+  const detail = normalizeConversationMessage(
+    pickFirstText(source.detail, source.pattern, source.query, source.url, source.task)
+  );
+
+  if (path) {
+    return `${tool} ${path}`;
+  }
+
+  if (detail) {
+    return `${tool} ${detail}`;
+  }
+
+  return tool;
+}
+
 // ---------------------------------------------------------------------------
 // 对话块 — 文本 / 展开
 // ---------------------------------------------------------------------------
@@ -648,6 +759,328 @@ function parseGeminiStreamBlock(event) {
     : null;
 }
 
+function parseOpencodeStreamBlock(event) {
+  const eventType = event.type || "";
+
+  if (eventType === "opencode.text") {
+    const content = normalizeConversationMessage(event.content || event.message || "");
+    return content
+      ? {
+          id: event.id || nextAgentStreamBlockId("opencode-text"),
+          type: "text",
+          content,
+          suppressLogLine: Boolean(event.suppressLogLine)
+        }
+      : null;
+  }
+
+  if (eventType === "opencode.thinking" || eventType === "opencode.status") {
+    const content = sanitizeOpencodeThoughtContent(event.content || event.message || "");
+    return content
+      ? {
+          id: event.id || nextAgentStreamBlockId("opencode-thought"),
+          type: "thought",
+          variant: "rich",
+          content,
+          suppressLogLine: Boolean(event.suppressLogLine)
+        }
+      : null;
+  }
+
+  if (eventType === "opencode.error") {
+    const content = normalizeConversationMessage(event.message || event.error || "");
+    return content
+      ? {
+          id: event.id || nextAgentStreamBlockId("opencode-error"),
+          type: "text",
+          tone: "error",
+          content,
+          suppressLogLine: Boolean(event.suppressLogLine)
+        }
+      : null;
+  }
+
+  if (eventType === "opencode.file") {
+    const status = normalizeConversationCommandStatus(event.status, "success");
+    const detail = pickFirstText(event.message, event.error);
+    return {
+      id: event.id || nextAgentStreamBlockId("opencode-file"),
+      type: "command",
+      title: "Workspace",
+      command: formatOpencodeToolCommand(event),
+      output: status === "error" ? normalizeConversationMessage(detail) : "",
+      status,
+      suppressLogLine: Boolean(event.suppressLogLine)
+    };
+  }
+
+  if (eventType === "opencode.tool") {
+    const tool = pickFirstText(event.tool, event.name) || "tool";
+    const status = normalizeConversationCommandStatus(event.status, "running");
+    const command = formatOpencodeToolCommand(event);
+    const detail = pickFirstText(event.detail, event.path, event.pattern, event.query);
+    const message = pickFirstText(event.message, event.error);
+
+    if (status === "error") {
+      return {
+        id: event.id || nextAgentStreamBlockId("opencode-command"),
+        type: "command",
+        title: "OpenCode Tool",
+        command,
+        output: normalizeConversationMessage(detail || message),
+        status,
+        suppressLogLine: Boolean(event.suppressLogLine)
+      };
+    }
+
+    return {
+      id: event.id || nextAgentStreamBlockId("opencode-command"),
+      type: "command",
+      title: /^(bash|shell)$/i.test(tool) ? "Agent CLI" : "OpenCode Tool",
+      command,
+      output: /^(bash|shell)$/i.test(tool)
+        ? normalizeConversationMessage(
+            pickFirstText(event.output, event.result, event.stdout, event.stderr, message)
+          )
+        : "",
+      status,
+      suppressLogLine: Boolean(event.suppressLogLine)
+    };
+  }
+
+  if (event.message) {
+    const content = sanitizeOpencodeThoughtContent(event.message);
+    return content
+      ? {
+          id: event.id || nextAgentStreamBlockId("opencode-message"),
+          type: "thought",
+          variant: "rich",
+          content,
+          suppressLogLine: Boolean(event.suppressLogLine)
+        }
+      : null;
+  }
+
+  return null;
+}
+
+function extractOpencodeMessages(payload) {
+  if (!payload) {
+    return [];
+  }
+
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+
+  const directMessage = payload.message && typeof payload.message === "object"
+    ? payload.message
+    : null;
+  if (directMessage) {
+    return [directMessage];
+  }
+
+  const collections = [payload.messages, payload.items, payload.data];
+  const list = collections.find((value) => Array.isArray(value) && value.length);
+  if (list) {
+    return list;
+  }
+
+  if (payload.parts && Array.isArray(payload.parts)) {
+    return [payload];
+  }
+
+  return [];
+}
+
+function opencodeAssistantMessageParts(message) {
+  if (!message || typeof message !== "object") {
+    return [];
+  }
+
+  const role = String(message.role || message.type || "").toLowerCase();
+  if (role && role !== "assistant") {
+    return [];
+  }
+
+  if (Array.isArray(message.parts)) {
+    return message.parts;
+  }
+
+  if (Array.isArray(message.content)) {
+    return message.content;
+  }
+
+  return [];
+}
+
+function buildOpencodePartEvent(part) {
+  if (!part || typeof part !== "object") {
+    return null;
+  }
+
+  const partType = String(part.type || "").toLowerCase();
+  const partId = part.id || part.partId || part.partID || part.toolCallId || part.tool_call_id || null;
+
+  if (partType === "text") {
+    return {
+      type: "opencode.text",
+      id: partId,
+      content: part.text || part.content || "",
+      suppressLogLine: true
+    };
+  }
+
+  if (partType === "thinking" || partType === "reasoning") {
+    return {
+      type: "opencode.thinking",
+      id: partId,
+      content: part.text || part.content || part.thinking || "",
+      suppressLogLine: true
+    };
+  }
+
+  if (partType === "tool") {
+    const state = part.state || {};
+    const input = state.input || {};
+    const tool = pickFirstText(part.toolName, part.name, part.tool) || "tool";
+    const path = pickFirstText(input.filePath, input.file_path, input.path);
+    const detail = pickFirstText(input.pattern, input.query, input.url, input.task);
+    const command = pickFirstText(input.command, input.cmd, input.commandLine, input.argv);
+    const output = pickFirstText(state.output, part.result, part.output);
+    const message = pickFirstText(state.error, part.error);
+    const status = String(state.status || (message ? "error" : output ? "completed" : "running"));
+
+    if (command || /^(bash|shell)$/i.test(tool)) {
+      return {
+        type: "opencode.tool",
+        id: part.callID || partId || nextAgentStreamBlockId("opencode-command"),
+        tool,
+        command: command || tool,
+        output: output || message,
+        status,
+        suppressLogLine: true
+      };
+    }
+
+    if (path || /(file|write|read|edit)/i.test(tool)) {
+      return {
+        type: "opencode.file",
+        id: part.callID || partId || nextAgentStreamBlockId("opencode-file"),
+        tool,
+        path,
+        detail,
+        message,
+        status,
+        suppressLogLine: true
+      };
+    }
+
+    return {
+      type: "opencode.tool",
+      id: part.callID || partId || nextAgentStreamBlockId("opencode-tool"),
+      tool,
+      detail,
+      message,
+      status,
+      suppressLogLine: true
+    };
+  }
+
+  if (partType === "tool-invocation" || partType === "tool-call" || partType === "tool_call") {
+    const args = part.args || part.input || {};
+    const tool = pickFirstText(part.toolName, part.name, part.tool) || "tool";
+    const command = pickFirstText(args.command, args.cmd, args.commandLine, args.argv);
+    const path = pickFirstText(args.file_path, args.path, args.filePath);
+    const output = pickFirstText(part.result, part.output);
+
+    if (command || /^(bash|shell)$/i.test(tool)) {
+      return {
+        type: "opencode.tool",
+        id: partId || nextAgentStreamBlockId("opencode-command"),
+        tool,
+        command: command || tool,
+        output,
+        status: output ? "completed" : "running",
+        suppressLogLine: true
+      };
+    }
+
+    if (path || /(file|write|read|edit)/i.test(tool)) {
+      return {
+        type: "opencode.file",
+        id: partId || nextAgentStreamBlockId("opencode-file"),
+        tool,
+        path,
+        status: output ? "completed" : "running",
+        suppressLogLine: true
+      };
+    }
+
+    return {
+      type: "opencode.tool",
+      id: partId || nextAgentStreamBlockId("opencode-tool"),
+      tool,
+      status: output ? "completed" : "running",
+      suppressLogLine: true
+    };
+  }
+
+  if (partType === "patch") {
+    const files = Array.isArray(part.files) ? part.files : [];
+    if (!files.length) {
+      return {
+        type: "opencode.tool",
+        id: partId || nextAgentStreamBlockId("opencode-patch"),
+        tool: "patch",
+        status: "completed",
+        suppressLogLine: true
+      };
+    }
+
+    return files.map((path, index) => ({
+      type: "opencode.file",
+      id: `${partId || nextAgentStreamBlockId("opencode-patch")}-${index}`,
+      tool: "patch",
+      path,
+      status: "completed",
+      suppressLogLine: true
+    }));
+  }
+
+  return null;
+}
+
+function buildOpencodeBlocksFromMessages(payload) {
+  const blocks = [];
+  const seen = new Set();
+
+  for (const message of extractOpencodeMessages(payload)) {
+    for (const part of opencodeAssistantMessageParts(message)) {
+      const events = []
+        .concat(buildOpencodePartEvent(part) || [])
+        .filter(Boolean);
+
+      for (const event of events) {
+        const block = event?.type === "designcode.block"
+          ? event.block
+          : parseOpencodeStreamBlock(event);
+        if (!block) {
+          continue;
+        }
+        const key = `${block.type}:${block.id}:${block.content || block.command || ""}`;
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        blocks.push(block);
+      }
+    }
+  }
+
+  return blocks;
+}
+
 function parseCliStreamBlock(payload) {
   if (!payload?.line) {
     return null;
@@ -691,7 +1124,7 @@ function parseCliStreamBlock(payload) {
     case "gemini":
       return parseGeminiStreamBlock(event);
     case "opencode":
-      return null;
+      return parseOpencodeStreamBlock(event);
     default:
       return parseCodexStreamBlock(event);
   }
@@ -970,6 +1403,9 @@ export function useConversation({
     parseCodexStreamBlock,
     parseClaudeStreamBlock,
     parseGeminiStreamBlock,
+    parseOpencodeStreamBlock,
+    extractOpencodeMessages,
+    buildOpencodeBlocksFromMessages,
     parseCliStreamBlock,
 
     // 流式块更新

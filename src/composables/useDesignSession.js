@@ -6,6 +6,7 @@ import {
   deleteDesignSession as requestDeleteDesignSession,
   generateDesign as requestGenerateDesign,
   editDesign as requestEditDesign,
+  listOpencodeMessages,
   listDesignSessions,
   openDesignSession,
   readDesignCommit,
@@ -51,6 +52,7 @@ const {
   shouldApplyPersistResult,
   syncActiveRuntimeSession,
   activeRuntimeBackend, activeRuntimeSessionId,
+  runtimeDirectory,
   runtimeBackendDisplayName,
   normalizeGeminiModelValue,
   activeModelLabel,
@@ -64,6 +66,7 @@ const { requestConfirmation } = useConfirmDialog();
 const {
   appendOptimisticUserConversation, finalizeOptimisticConversationEntry,
   rollbackOptimisticConversationEntry, appendLocalAssistantConversation,
+  buildOpencodeBlocksFromMessages,
 } = useConversation();
 
 // ---------------------------------------------------------------------------
@@ -807,7 +810,53 @@ function buildPayload(extra = {}) {
   };
 }
 
-function applyDesignResult(result, label) {
+async function recoverOpencodeConversationBlocks(result) {
+  if (!state.desktop.isDesktop || activeRuntimeBackend.value !== "opencode") {
+    return [];
+  }
+
+  const sessionId =
+    result?.design?.runtimeSessions?.opencode
+    || result?.design?.sessionId
+    || activeRuntimeSessionId.value;
+
+  if (!sessionId) {
+    return [];
+  }
+
+  try {
+    const messages = await listOpencodeMessages(sessionId, runtimeDirectory.value);
+    return buildOpencodeBlocksFromMessages(messages);
+  } catch {
+    return [];
+  }
+}
+
+function hydrateAssistantBlocksIntoChat(chat, blocks = []) {
+  if (!Array.isArray(chat) || !blocks.length) {
+    return chat;
+  }
+
+  const assistantIndex = [...chat].findLastIndex((message) => message?.role === "assistant");
+  if (assistantIndex === -1) {
+    return chat;
+  }
+
+  const target = chat[assistantIndex];
+  if (Array.isArray(target?.blocks) && target.blocks.length) {
+    return chat;
+  }
+
+  const nextChat = [...chat];
+  nextChat[assistantIndex] = {
+    ...target,
+    blocks: cloneSnapshot(blocks)
+  };
+  return nextChat;
+}
+
+function applyDesignResult(result, label, options = {}) {
+  const { preserveStreamBlocks = false, assistantBlocks = [] } = options;
   const previousScopeKey = currentConversationScopeKey.value;
   state.currentHtml = result.html;
   state.currentMeta = normalizeMeta(result.meta || result.design?.currentMeta || state.currentMeta);
@@ -835,8 +884,10 @@ function applyDesignResult(result, label) {
     upsertDesignLibraryItem(result.design);
   }
   if (Array.isArray(result.chat)) {
-    state.design.chat = result.chat;
-    state.agent.streamBlocks = [];
+    state.design.chat = hydrateAssistantBlocksIntoChat(result.chat, assistantBlocks);
+    if (!preserveStreamBlocks) {
+      state.agent.streamBlocks = [];
+    }
   }
   syncVersionsFromCommits(result.commits || [], result.commits?.[result.commits.length - 1]?.commitHash);
   syncActiveRuntimeSession();
@@ -904,15 +955,34 @@ async function generateDesign() {
       _appendAgentOutputLine(t("status.firstDraftSynced"));
     }
     const assistantCreatedAt = new Date().toISOString();
+    const recoveredBlocks = !state.agent.streamBlocks.length
+      ? await recoverOpencodeConversationBlocks(result)
+      : [];
+    if (recoveredBlocks.length) {
+      state.agent.streamBlocks = recoveredBlocks;
+    }
     const savedStreamBlocks = _serializeConversationBlocksForStorage([...state.agent.streamBlocks]);
-    applyDesignResult(result, "生成");
+    applyDesignResult(result, "生成", {
+      assistantBlocks: savedStreamBlocks
+    });
     if (savedStreamBlocks.length && state.design.currentId) {
+      const savedStreamBlocksSignature = JSON.stringify(savedStreamBlocks);
       runInBackground(() => syncDesignWorkspaceSnapshot({
         ...buildPayload({ designId: state.design.currentId }),
         assistantBlocks: savedStreamBlocks,
         instructionCreatedAt,
         assistantCreatedAt
-      }).then((synced) => { if (synced?.chat) { state.design.chat = synced.chat; } }).catch(() => {}));
+      }).then((synced) => {
+        if (synced?.chat) {
+          state.design.chat = synced.chat;
+        }
+        const currentStreamBlocksSignature = JSON.stringify(
+          _serializeConversationBlocksForStorage([...state.agent.streamBlocks])
+        );
+        if (currentStreamBlocksSignature === savedStreamBlocksSignature) {
+          state.agent.streamBlocks = [];
+        }
+      }).catch(() => {}));
     }
     state.composer = "";
     setStatus(t("status.firstDraftGenerated"), "success", "generate");
@@ -1000,17 +1070,36 @@ async function editDesign() {
       _appendAgentOutputLine(t("status.editSynced"));
     }
     const assistantCreatedAt = new Date().toISOString();
+    const recoveredBlocks = !state.agent.streamBlocks.length
+      ? await recoverOpencodeConversationBlocks(result)
+      : [];
+    if (recoveredBlocks.length) {
+      state.agent.streamBlocks = recoveredBlocks;
+    }
     const savedStreamBlocks = _serializeConversationBlocksForStorage([...state.agent.streamBlocks]);
-    applyDesignResult(result, "编辑");
+    applyDesignResult(result, "编辑", {
+      assistantBlocks: savedStreamBlocks
+    });
     state.composer = "";
     setStatus(t("status.editComplete"), "success", "edit");
     if (savedStreamBlocks.length && state.design.currentId) {
+      const savedStreamBlocksSignature = JSON.stringify(savedStreamBlocks);
       runInBackground(() => syncDesignWorkspaceSnapshot({
         ...buildPayload({ designId: state.design.currentId }),
         assistantBlocks: savedStreamBlocks,
         instructionCreatedAt,
         assistantCreatedAt
-      }).then((synced) => { if (synced?.chat) { state.design.chat = synced.chat; } }).catch(() => {}));
+      }).then((synced) => {
+        if (synced?.chat) {
+          state.design.chat = synced.chat;
+        }
+        const currentStreamBlocksSignature = JSON.stringify(
+          _serializeConversationBlocksForStorage([...state.agent.streamBlocks])
+        );
+        if (currentStreamBlocksSignature === savedStreamBlocksSignature) {
+          state.agent.streamBlocks = [];
+        }
+      }).catch(() => {}));
     }
     runInBackground(async () => {
       await Promise.allSettled([

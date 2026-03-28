@@ -75,7 +75,11 @@ const { submitConversation, handleComposerKeydown } = useDesignSession();
 
             <div v-else class="conversation-agent-blocks">
               <template v-for="block in entry.blocks" :key="block.id">
-                <article v-if="block.type === 'thought'" class="agent-block agent-block-thought">
+                <article
+                  v-if="block.type === 'thought'"
+                  class="agent-block agent-block-thought"
+                  :class="{ 'agent-block-thought-rich': block.variant === 'rich' }"
+                >
                   <p
                     class="conversation-block-copy"
                     :class="{ 'is-collapsed': conversationBlockExpandable(block) && !isConversationBlockExpanded(entry.id, block) }"
@@ -94,7 +98,7 @@ const { submitConversation, handleComposerKeydown } = useDesignSession();
 
                 <article v-else-if="block.type === 'command'" class="agent-block agent-block-command" :data-status="block.status || 'success'">
                   <div class="agent-block-command-head">
-                    <span>Agent CLI</span>
+                    <span>{{ block.title || "Agent CLI" }}</span>
                     <strong>{{ block.status || "success" }}</strong>
                   </div>
                   <div class="agent-block-command-line">

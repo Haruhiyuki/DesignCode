@@ -282,6 +282,18 @@ async fn run_opencode_design(
             )
         });
 
+    let event_stream = stream_id
+        .as_deref()
+        .map(|stream_id| {
+            spawn_opencode_event_stream(
+                &app,
+                status.port,
+                session_id.as_str(),
+                Some(workspace_dir.as_str()),
+                stream_id,
+            )
+        });
+
     let response = opencode_request_with_timeout(
         status.port,
         Method::POST,
@@ -301,12 +313,45 @@ async fn run_opencode_design(
     )
     .await;
 
+    let mut visible_opencode_log_events = 0usize;
+    if let Some((stop_tx, handle, counter)) = event_stream {
+        let _ = stop_tx.send(true);
+        let _ = handle.await;
+        visible_opencode_log_events = counter.load(std::sync::atomic::Ordering::Relaxed);
+    }
     if let Some((stop_tx, handle)) = poller {
         let _ = stop_tx.send(true);
         let _ = handle.await;
     }
 
     let response = response?;
+
+    if let Some(stream_id) = stream_id.as_deref() {
+        if visible_opencode_log_events == 0 {
+            let _ = emit_opencode_session_snapshot_internal(
+                &app,
+                status.port,
+                session_id.as_str(),
+                Some(workspace_dir.as_str()),
+                stream_id,
+                false,
+            )
+            .await;
+        } else {
+            let emitted = emit_opencode_message_snapshot_internal(&app, stream_id, &response, true);
+            if emitted == 0 {
+                let _ = emit_opencode_session_snapshot_internal(
+                    &app,
+                    status.port,
+                    session_id.as_str(),
+                    Some(workspace_dir.as_str()),
+                    stream_id,
+                    true,
+                )
+                .await;
+            }
+        }
+    }
 
     if let Some(error) = extract_opencode_error(&response) {
         return Err(format!("OpenCode design execution failed: {error}"));
@@ -1569,6 +1614,18 @@ async fn opencode_send_prompt(
             )
         });
 
+    let event_stream = stream_id
+        .as_deref()
+        .map(|stream_id| {
+            spawn_opencode_event_stream(
+                &app,
+                status.port,
+                session_id.as_str(),
+                directory.as_deref(),
+                stream_id,
+            )
+        });
+
     let result = opencode_request_with_timeout(
         status.port,
         Method::POST,
@@ -1579,12 +1636,47 @@ async fn opencode_send_prompt(
     )
     .await;
 
+    let mut visible_opencode_log_events = 0usize;
+    if let Some((stop_tx, handle, counter)) = event_stream {
+        let _ = stop_tx.send(true);
+        let _ = handle.await;
+        visible_opencode_log_events = counter.load(std::sync::atomic::Ordering::Relaxed);
+    }
     if let Some((stop_tx, handle)) = poller {
         let _ = stop_tx.send(true);
         let _ = handle.await;
     }
 
-    result
+    let result = result?;
+
+    if let Some(stream_id) = stream_id.as_deref() {
+        if visible_opencode_log_events == 0 {
+            let _ = emit_opencode_session_snapshot_internal(
+                &app,
+                status.port,
+                session_id.as_str(),
+                directory.as_deref(),
+                stream_id,
+                false,
+            )
+            .await;
+        } else {
+            let emitted = emit_opencode_message_snapshot_internal(&app, stream_id, &result, true);
+            if emitted == 0 {
+                let _ = emit_opencode_session_snapshot_internal(
+                    &app,
+                    status.port,
+                    session_id.as_str(),
+                    directory.as_deref(),
+                    stream_id,
+                    true,
+                )
+                .await;
+            }
+        }
+    }
+
+    Ok(result)
 }
 
 #[tauri::command]
@@ -1617,6 +1709,18 @@ async fn opencode_run_shell(
             )
         });
 
+    let event_stream = stream_id
+        .as_deref()
+        .map(|stream_id| {
+            spawn_opencode_event_stream(
+                &app,
+                status.port,
+                session_id.as_str(),
+                directory.as_deref(),
+                stream_id,
+            )
+        });
+
     let result = opencode_request_with_timeout(
         status.port,
         Method::POST,
@@ -1627,12 +1731,47 @@ async fn opencode_run_shell(
     )
     .await;
 
+    let mut visible_opencode_log_events = 0usize;
+    if let Some((stop_tx, handle, counter)) = event_stream {
+        let _ = stop_tx.send(true);
+        let _ = handle.await;
+        visible_opencode_log_events = counter.load(std::sync::atomic::Ordering::Relaxed);
+    }
     if let Some((stop_tx, handle)) = poller {
         let _ = stop_tx.send(true);
         let _ = handle.await;
     }
 
-    result
+    let result = result?;
+
+    if let Some(stream_id) = stream_id.as_deref() {
+        if visible_opencode_log_events == 0 {
+            let _ = emit_opencode_session_snapshot_internal(
+                &app,
+                status.port,
+                session_id.as_str(),
+                directory.as_deref(),
+                stream_id,
+                false,
+            )
+            .await;
+        } else {
+            let emitted = emit_opencode_message_snapshot_internal(&app, stream_id, &result, true);
+            if emitted == 0 {
+                let _ = emit_opencode_session_snapshot_internal(
+                    &app,
+                    status.port,
+                    session_id.as_str(),
+                    directory.as_deref(),
+                    stream_id,
+                    true,
+                )
+                .await;
+            }
+        }
+    }
+
+    Ok(result)
 }
 
 #[tauri::command]

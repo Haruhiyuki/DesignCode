@@ -41,6 +41,7 @@ import { t } from "../i18n/index.js";
 import { useWorkspaceState } from "./useWorkspaceState.js";
 import { useSetupConfig } from "./useSetupConfig.js";
 import { useCliStream } from "./useCliStream.js";
+import { useConversation } from "./useConversation.js";
 import { useDesignSession } from "./useDesignSession.js";
 import { useArtAssets } from "./useArtAssets.js";
 
@@ -79,8 +80,10 @@ const {
   markConversationRuntimeScope,
   serializeConversationBlocksForStorage,
   beginCliStream, endCliStream,
-  summarizeCliResultOutput,
+  summarizeCliResultOutput, formatCliBlockSummary,
 } = useCliStream();
+
+const { buildOpencodeBlocksFromMessages } = useConversation();
 
 const {
   buildPayload, applyOpenedDesignRecord,
@@ -106,6 +109,17 @@ let opencodeAutoStartSuppressed = false;
 
 function sleep(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function formatOpencodeMessagesForConsole(messages) {
+  const blocks = buildOpencodeBlocksFromMessages(messages);
+  return blocks
+    .map((block) => formatCliBlockSummary({
+      ...block,
+      suppressLogLine: false
+    }, "opencode"))
+    .filter(Boolean)
+    .join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -1199,7 +1213,9 @@ async function refreshDesktopIntegration(options = {}) {
 
       if (messagesResult.status === "fulfilled" && messagesResult.value) {
         state.agent.outputDesignId = currentConversationScopeKey.value;
-        state.agent.output = inferAgentText(messagesResult.value);
+        state.agent.output = activeRuntimeBackend.value === "opencode"
+          ? formatOpencodeMessagesForConsole(messagesResult.value) || inferAgentText(messagesResult.value)
+          : inferAgentText(messagesResult.value);
       } else if (messagesResult.status === "rejected") {
         state.agent.outputDesignId = currentConversationScopeKey.value;
         state.agent.output = t("runtime.refresh.messagesFailed", { error: messagesResult.reason instanceof Error ? messagesResult.reason.message : String(messagesResult.reason) });
