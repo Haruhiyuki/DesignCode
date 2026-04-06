@@ -1,3 +1,6 @@
+// 在 release 构建中隐藏 Windows 控制台窗口
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 // DesignCode Desktop — Tauri 应用入口
 //
 // 设计工作流编排、tauri command 处理器、应用初始化。

@@ -656,6 +656,11 @@ pub fn stage_bundled_runtime_binary(app: &AppHandle, kind: &str) -> Result<PathB
         .find(|candidate| candidate.exists())
         .ok_or_else(|| format!("Bundled {kind} runtime is missing."))?;
 
+    // Windows 上不存在 macOS 的代码签名 inode 缓存问题，直接使用安装目录内的运行时
+    if cfg!(windows) {
+        return Ok(source);
+    }
+
     let data_dir = app
         .path()
         .app_local_data_dir()
