@@ -256,6 +256,10 @@
   "topbar.collapseMenu": "メニューを折りたたむ",
   "topbar.expandMenu": "メニューを展開",
 
+  "tab.untitled": "新規デザイン",
+  "tab.newTab": "新しいタブ",
+  "tab.closeTab": "タブを閉じる",
+
   "history.dateUnknown": "作成日不明",
   "history.createdAt": "{date} に作成",
   "history.timeUnknown": "時刻不明",

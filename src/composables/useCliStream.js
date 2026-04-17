@@ -5,6 +5,7 @@ import { t } from "../i18n/index.js";
 import { useWorkspaceState } from "./useWorkspaceState.js";
 import { useSetupConfig } from "./useSetupConfig.js";
 import { useConversation } from "./useConversation.js";
+import { useTabs, withTabContext, effectiveActiveTabId } from "./useTabs.js";
 
 // ---------------------------------------------------------------------------
 // 模块级单例状态
@@ -21,13 +22,11 @@ const {
 // 模块级 let 变量
 // ---------------------------------------------------------------------------
 
-let removeCodexStreamListener = null;
+// 多标签页：每个 tab 维护独立的 stream 监听器；不再用单例 removeCodexStreamListener。
+// 切 tab 时旧 tab 的 stream 仍在后台运行并往 tab 自己的 store 写入。
+const tabStreamListeners = new Map(); // tabId -> { streamId, off, heartbeatTimer, startedAt, lastEventAt, lastHeartbeatAt, suppressed }
 let activeCodexSuppressedLines = new Set();
 let geminiStderrCapacityModel = "";
-let codexStreamHeartbeatTimer = null;
-let codexStreamStartedAt = 0;
-let codexStreamLastEventAt = 0;
-let codexStreamLastHeartbeatAt = 0;
 
 // ---------------------------------------------------------------------------
 // 流 ID 和辅助
@@ -124,11 +123,15 @@ function sanitizeAgentLogMessage(value) {
 }
 
 function formatStreamElapsedTag(timestamp = Date.now()) {
-  if (!codexStreamStartedAt) {
+  // 从当前 tab（或 withTabContext override 的 origin tab）对应的 stream handle
+  // 取 startedAt。之前引用的 module-level codexStreamStartedAt 在改成 per-tab
+  // Map 时被删掉了，但这里漏改导致 ReferenceError——整个 stream 事件处理块
+  // 被异常中断，日志面板永远拿不到内容。
+  const handle = tabStreamListeners.get(effectiveActiveTabId());
+  if (!handle?.startedAt) {
     return "";
   }
-
-  const elapsed = Math.max(0, timestamp - codexStreamStartedAt);
+  const elapsed = Math.max(0, timestamp - handle.startedAt);
   const totalSeconds = elapsed / 1000;
   return `+${totalSeconds.toFixed(1)}s`;
 }
@@ -709,77 +712,111 @@ function serializeConversationBlocksForStorage(blocks = []) {
 // ---------------------------------------------------------------------------
 
 async function beginCliStream(streamId, backend, suppressedBlocks = []) {
-  if (removeCodexStreamListener) {
-    removeCodexStreamListener();
-    removeCodexStreamListener = null;
-  }
-  if (codexStreamHeartbeatTimer) {
-    window.clearInterval(codexStreamHeartbeatTimer);
-    codexStreamHeartbeatTimer = null;
+  // 用 effectiveActiveTabId 而非直接 activeTabId.value：generateDesign 等调用方
+  // 可能把 sync 块包在 withTabContext(origin) 里再调 beginCliStream，这时
+  // effective 能拿到 origin，而不是当前用户正在看的 tab。
+  const originatingTabId = effectiveActiveTabId();
+
+  // 关闭此 tab 之前可能未结束的旧 stream 监听
+  const prev = tabStreamListeners.get(originatingTabId);
+  if (prev) {
+    prev.off?.();
+    if (prev.heartbeatTimer) window.clearInterval(prev.heartbeatTimer);
+    tabStreamListeners.delete(originatingTabId);
   }
 
-  markConversationRuntimeScope();
-  state.agent.outputDesignId = currentConversationScopeKey.value;
-  state.agent.output = "";
-  state.agent.streamBlocks = [];
+  withTabContext(originatingTabId, () => {
+    markConversationRuntimeScope();
+    state.agent.outputDesignId = currentConversationScopeKey.value;
+    state.agent.output = "";
+    state.agent.streamBlocks = [];
+  });
+  // 全局共享：抑制重复行 / 隐藏 stderr 容量行 的状态。短时间内一次只跑一个流通常足够；
+  // 多 tab 同时跑也只会抑制一些边角日志，不影响功能。
   activeCodexSuppressedLines = buildCodexSuppressedLines(suppressedBlocks);
   geminiStderrCapacityModel = "";
-  codexStreamStartedAt = Date.now();
-  codexStreamLastEventAt = codexStreamStartedAt;
-  codexStreamLastHeartbeatAt = codexStreamStartedAt;
-  codexStreamHeartbeatTimer = window.setInterval(() => {
+
+  const startedAt = Date.now();
+  const handle = {
+    streamId,
+    backend,
+    startedAt,
+    lastEventAt: startedAt,
+    lastHeartbeatAt: startedAt,
+    off: null,
+    heartbeatTimer: null
+  };
+
+  handle.heartbeatTimer = window.setInterval(() => {
     const now = Date.now();
-    const elapsedSeconds = Math.max(1, Math.round((now - codexStreamStartedAt) / 1000));
-    const silentSeconds = Math.round((now - codexStreamLastEventAt) / 1000);
-    if (elapsedSeconds < 15 || now - codexStreamLastHeartbeatAt < 15000) {
+    const elapsedSeconds = Math.max(1, Math.round((now - handle.startedAt) / 1000));
+    const silentSeconds = Math.round((now - handle.lastEventAt) / 1000);
+    if (elapsedSeconds < 15 || now - handle.lastHeartbeatAt < 15000) {
       return;
     }
-    codexStreamLastHeartbeatAt = now;
-    if (silentSeconds >= 20) {
-      appendAgentOutputLine(
-        prefixMultilineLog(
-          `[${backend}] Still running... ${elapsedSeconds}s elapsed, waiting for the next event.`,
-          formatStreamElapsedTag()
-        )
-      );
-    } else if (silentSeconds >= 10) {
-      appendAgentOutputLine(
-        prefixMultilineLog(
-          `[${backend}] Running... ${elapsedSeconds}s elapsed.`,
-          formatStreamElapsedTag()
-        )
-      );
-    }
+    handle.lastHeartbeatAt = now;
+    withTabContext(originatingTabId, () => {
+      if (silentSeconds >= 20) {
+        appendAgentOutputLine(
+          prefixMultilineLog(
+            `[${backend}] Still running... ${elapsedSeconds}s elapsed, waiting for the next event.`,
+            formatStreamElapsedTag()
+          )
+        );
+      } else if (silentSeconds >= 10) {
+        appendAgentOutputLine(
+          prefixMultilineLog(
+            `[${backend}] Running... ${elapsedSeconds}s elapsed.`,
+            formatStreamElapsedTag()
+          )
+        );
+      }
+    });
   }, 5000);
-  removeCodexStreamListener = await listenCliOutput((payload) => {
+
+  handle.off = await listenCliOutput((payload) => {
     if (!payload || payload.streamId !== streamId) {
       return;
     }
-    codexStreamLastEventAt = Date.now();
+    handle.lastEventAt = Date.now();
 
-    const formatted = formatCliStreamPayload(payload);
-    if (formatted) {
-      appendAgentOutputLine(prefixMultilineLog(formatted, formatStreamElapsedTag()));
-    }
-
-    const block = parseCliStreamBlock(payload);
-    if (block) {
-      upsertAgentStreamBlock(block);
-    }
+    withTabContext(originatingTabId, () => {
+      const formatted = formatCliStreamPayload(payload);
+      if (formatted) {
+        appendAgentOutputLine(prefixMultilineLog(formatted, formatStreamElapsedTag()));
+      }
+      const block = parseCliStreamBlock(payload);
+      if (block) {
+        upsertAgentStreamBlock(block);
+      }
+    });
   });
+
+  tabStreamListeners.set(originatingTabId, handle);
 }
 
 function endCliStream() {
-  if (removeCodexStreamListener) {
-    removeCodexStreamListener();
-    removeCodexStreamListener = null;
-  }
-  if (codexStreamHeartbeatTimer) {
-    window.clearInterval(codexStreamHeartbeatTimer);
-    codexStreamHeartbeatTimer = null;
+  // 多标签页：仅停止当前 tab 的 stream；其它 tab 的 stream 保持运行。
+  // 同样使用 effective：若 endCliStream 被包在 withTabContext(origin) 里调，
+  // 停的是那个 origin tab 的 stream 而不是当前用户看的 tab。
+  const tabId = effectiveActiveTabId();
+  const handle = tabStreamListeners.get(tabId);
+  if (handle) {
+    handle.off?.();
+    if (handle.heartbeatTimer) window.clearInterval(handle.heartbeatTimer);
+    tabStreamListeners.delete(tabId);
   }
   activeCodexSuppressedLines = new Set();
   geminiStderrCapacityModel = "";
+}
+
+// 关闭某个 tab 时调用：彻底停掉该 tab 名下的 stream 监听
+export function endCliStreamForTab(tabId) {
+  const handle = tabStreamListeners.get(tabId);
+  if (!handle) return;
+  handle.off?.();
+  if (handle.heartbeatTimer) window.clearInterval(handle.heartbeatTimer);
+  tabStreamListeners.delete(tabId);
 }
 
 // ---------------------------------------------------------------------------

@@ -150,8 +150,9 @@ fn compose_design_system_prompt(base_prompt: &str) -> String {
 async fn ensure_opencode_ready(
     app: &AppHandle,
     state: &State<'_, RuntimeState>,
+    run_id: &str,
 ) -> Result<OpencodeStatus, String> {
-    let status = snapshot_opencode(app, state).await?;
+    let status = snapshot_opencode(app, state, run_id).await?;
     if status.running {
         return Ok(status);
     }
@@ -166,6 +167,7 @@ async fn ensure_opencode_ready(
     opencode_start(
         app.clone(),
         state.clone(),
+        run_id.to_string(),
         Some(status.binary.clone()),
         None,
         Some(status.port),
@@ -176,6 +178,7 @@ async fn ensure_opencode_ready(
 async fn ensure_design_session(
     app: &AppHandle,
     state: &State<'_, RuntimeState>,
+    run_id: &str,
     design: &Value,
 ) -> Result<String, String> {
     if let Some(session_id) = read_nested_string(design, &["runtimeSessions", "opencode"])
@@ -188,7 +191,7 @@ async fn ensure_design_session(
         .ok_or_else(|| "Missing design id in prepared session.".to_string())?;
     let workspace_dir = read_nested_string(design, &["workspaceDir"])
         .ok_or_else(|| "Missing workspace directory in prepared session.".to_string())?;
-    let status = snapshot_opencode(app, state).await?;
+    let status = snapshot_opencode(app, state, run_id).await?;
     let response = opencode_request(
         status.port,
         Method::POST,
@@ -212,13 +215,9 @@ async fn ensure_design_session(
         })),
     )?;
 
-    {
-        let mut opencode = state
-            .opencode
-            .lock()
-            .map_err(|_| "Failed to lock OpenCode state.")?;
+    with_opencode_state(state.inner(), run_id, |opencode| {
         opencode.session_id = Some(session_id.clone());
-    }
+    })?;
 
     Ok(session_id)
 }
@@ -247,6 +246,7 @@ fn summarize_design_mode(mode: &str) -> String {
 async fn run_opencode_design(
     app: AppHandle,
     state: State<'_, RuntimeState>,
+    run_id: &str,
     payload: Value,
     mode: &str,
 ) -> Result<Value, String> {
@@ -264,8 +264,8 @@ async fn run_opencode_design(
         .ok_or_else(|| "Missing design id from preparation.".to_string())?;
     let workspace_dir = read_nested_string(&design, &["workspaceDir"])
         .ok_or_else(|| "Missing workspace directory from preparation.".to_string())?;
-    let session_id = ensure_design_session(&app, &state, &design).await?;
-    let status = ensure_opencode_ready(&app, &state).await?;
+    let session_id = ensure_design_session(&app, &state, run_id, &design).await?;
+    let status = ensure_opencode_ready(&app, &state, run_id).await?;
     let (prompt_bundle, system_prompt, user_message) = extract_prompt_bundle_fields(&prepared)?;
     let stream_id = payload
         .get("streamId")
@@ -419,6 +419,7 @@ async fn run_opencode_design(
 
 async fn run_codex_design(
     app: AppHandle,
+    run_id: String,
     payload: Value,
     mode: &str,
 ) -> Result<Value, String> {
@@ -473,11 +474,13 @@ async fn run_codex_design(
     let binary_for_turn = codex_binary.map(ToOwned::to_owned);
     let proxy_for_turn = runtime_proxy.map(ToOwned::to_owned);
     let stream_id_for_turn = stream_id.map(ToOwned::to_owned);
+    let run_id_for_turn = run_id.clone();
     let join = tokio::task::spawn_blocking(move || {
         let runtime = handle.state::<RuntimeState>();
         run_codex_app_server_turn(
             &handle,
             runtime.inner(),
+            run_id_for_turn.as_str(),
             &workspace_dir_for_turn,
             existing_thread_for_turn.as_deref(),
             Some(system_prompt_for_turn.as_str()),
@@ -545,6 +548,7 @@ async fn run_codex_design(
 async fn run_cli_design(
     app: AppHandle,
     state: State<'_, RuntimeState>,
+    run_id: &str,
     payload: Value,
     mode: &str,
     backend: &str,
@@ -600,6 +604,7 @@ async fn run_cli_design(
         "claude" => run_claude_stream_turn(
             &app,
             state.inner(),
+            run_id,
             &prompt,
             &workspace_dir,
             existing_session_id.as_deref(),
@@ -697,13 +702,14 @@ fn desktop_catalog(app: AppHandle) -> Result<Value, String> {
 async fn desktop_generate_design(
     app: AppHandle,
     state: State<'_, RuntimeState>,
+    run_id: String,
     payload: Value,
 ) -> Result<Value, String> {
     match runtime_backend_from_payload(&payload) {
-        "codex" => run_codex_design(app, payload, "generate").await,
-        "claude" => run_cli_design(app, state, payload, "generate", "claude").await,
-        "gemini" => run_cli_design(app, state, payload, "generate", "gemini").await,
-        _ => run_opencode_design(app, state, payload, "generate").await,
+        "codex" => run_codex_design(app, run_id, payload, "generate").await,
+        "claude" => run_cli_design(app, state, run_id.as_str(), payload, "generate", "claude").await,
+        "gemini" => run_cli_design(app, state, run_id.as_str(), payload, "generate", "gemini").await,
+        _ => run_opencode_design(app, state, run_id.as_str(), payload, "generate").await,
     }
 }
 
@@ -711,13 +717,14 @@ async fn desktop_generate_design(
 async fn desktop_edit_design(
     app: AppHandle,
     state: State<'_, RuntimeState>,
+    run_id: String,
     payload: Value,
 ) -> Result<Value, String> {
     match runtime_backend_from_payload(&payload) {
-        "codex" => run_codex_design(app, payload, "edit").await,
-        "claude" => run_cli_design(app, state, payload, "edit", "claude").await,
-        "gemini" => run_cli_design(app, state, payload, "edit", "gemini").await,
-        _ => run_opencode_design(app, state, payload, "edit").await,
+        "codex" => run_codex_design(app, run_id, payload, "edit").await,
+        "claude" => run_cli_design(app, state, run_id.as_str(), payload, "edit", "claude").await,
+        "gemini" => run_cli_design(app, state, run_id.as_str(), payload, "edit", "gemini").await,
+        _ => run_opencode_design(app, state, run_id.as_str(), payload, "edit").await,
     }
 }
 
@@ -832,10 +839,11 @@ fn desktop_design_sync_workspace(app: AppHandle, payload: Value) -> Result<Value
 async fn desktop_context(
     app: AppHandle,
     state: State<'_, RuntimeState>,
+    run_id: String,
 ) -> Result<DesktopContext, String> {
     let root = resolve_project_root(&app)?;
     let node_version = command_version(resolve_node_binary(&app), "--version", &root);
-    let opencode = snapshot_opencode(&app, &state).await?;
+    let opencode = snapshot_opencode(&app, &state, run_id.as_str()).await?;
 
     Ok(DesktopContext {
         is_desktop: true,
@@ -854,8 +862,9 @@ async fn desktop_context(
 async fn opencode_status(
     app: AppHandle,
     state: State<'_, RuntimeState>,
+    run_id: String,
 ) -> Result<OpencodeStatus, String> {
-    snapshot_opencode(&app, &state).await
+    snapshot_opencode(&app, &state, run_id.as_str()).await
 }
 
 #[tauri::command]
@@ -917,10 +926,14 @@ fn codex_update_settings(
 #[tauri::command]
 fn codex_open_login(
     app: AppHandle,
+    state: State<'_, RuntimeState>,
     binary: Option<String>,
     device_auth: Option<bool>,
     proxy: Option<String>,
 ) -> Result<Value, String> {
+    // 重新登录前先停掉旧的共享 app-server，下一次 ensure_* 会用新 auth 重启。
+    // 否则老进程在新 auth.json 写入后仍持有过期 token，所有请求继续失败。
+    reset_shared_codex_client(state.inner());
     Ok(json!({
         "message": open_codex_login_terminal(
             &app,
@@ -1038,12 +1051,14 @@ async fn gemini_verify(
 async fn opencode_start(
     app: AppHandle,
     state: State<'_, RuntimeState>,
+    run_id: String,
     binary: Option<String>,
     proxy: Option<String>,
     port: Option<u16>,
 ) -> Result<OpencodeStatus, String> {
     let root = resolve_project_root(&app)?;
-    let desired_port = port.unwrap_or(4096);
+    // 每个 tab 启动 OpenCode 时从端口池分配独立端口，避免多 tab 抢同一个 4096
+    let desired_port = allocate_opencode_port(state.inner(), port);
     let desired_binary = resolve_opencode_binary(&app, binary.as_deref());
     let desired_proxy = proxy
         .map(|value| value.trim().to_string())
@@ -1052,16 +1067,12 @@ async fn opencode_start(
     let version = opencode_command_version(&desired_binary, &root)?;
 
     if opencode_health(desired_port).await {
-        {
-            let mut opencode = state
-                .opencode
-                .lock()
-                .map_err(|_| "Failed to lock OpenCode state.")?;
+        with_opencode_state(state.inner(), run_id.as_str(), |opencode| {
             opencode.binary = desired_binary.display().to_string();
             opencode.port = desired_port;
             opencode.managed = false;
-        }
-        let mut status = snapshot_opencode(&app, &state).await?;
+        })?;
+        let mut status = snapshot_opencode(&app, &state, run_id.as_str()).await?;
         status.version = Some(version);
         return Ok(status);
     }
@@ -1106,37 +1117,30 @@ async fn opencode_start(
         .spawn()
         .map_err(|error| format!("Failed to start OpenCode: {error}"))?;
 
-    {
-        let mut opencode = state
-            .opencode
-            .lock()
-            .map_err(|_| "Failed to lock OpenCode state.")?;
+    with_opencode_state(state.inner(), run_id.as_str(), |opencode| {
         opencode.child = Some(child);
         opencode.port = desired_port;
         opencode.binary = desired_binary.display().to_string();
         opencode.managed = true;
-    }
+    })?;
 
     let started_at = Instant::now();
     while started_at.elapsed() < OPENCODE_READY_TIMEOUT {
         if opencode_health(desired_port).await {
-            let mut status = snapshot_opencode(&app, &state).await?;
+            let mut status = snapshot_opencode(&app, &state, run_id.as_str()).await?;
             status.version = Some(version);
             return Ok(status);
         }
 
-        {
-            let mut opencode = state
-                .opencode
-                .lock()
-                .map_err(|_| "Failed to lock OpenCode state.")?;
-            refresh_child_state(&mut opencode);
-            if opencode.child.is_none() {
-                let detail = latest_opencode_log_line()
-                    .map(|line| format!(" Latest OpenCode log: {line}"))
-                    .unwrap_or_default();
-                return Err(format!("OpenCode exited before becoming ready.{detail}"));
-            }
+        let child_alive = with_opencode_state(state.inner(), run_id.as_str(), |opencode| {
+            refresh_child_state(opencode);
+            opencode.child.is_some()
+        })?;
+        if !child_alive {
+            let detail = latest_opencode_log_line()
+                .map(|line| format!(" Latest OpenCode log: {line}"))
+                .unwrap_or_default();
+            return Err(format!("OpenCode exited before becoming ready.{detail}"));
         }
         sleep(Duration::from_millis(500)).await;
     }
@@ -1148,20 +1152,10 @@ async fn opencode_start(
 async fn opencode_stop(
     app: AppHandle,
     state: State<'_, RuntimeState>,
+    run_id: String,
 ) -> Result<OpencodeStatus, String> {
-    let port_to_stop = {
-        let opencode = state
-            .opencode
-            .lock()
-            .map_err(|_| "Failed to lock OpenCode state.")?;
-        opencode.port
-    };
-
-    {
-        let mut opencode = state
-            .opencode
-            .lock()
-            .map_err(|_| "Failed to lock OpenCode state.")?;
+    let port_to_stop = with_opencode_state(state.inner(), run_id.as_str(), |opencode| {
+        let port = opencode.port;
         if let Some(child) = opencode.child.as_mut() {
             let _ = child.kill();
             let _ = child.wait();
@@ -1169,9 +1163,11 @@ async fn opencode_stop(
         opencode.child = None;
         opencode.session_id = None;
         opencode.managed = false;
-    }
+        port
+    })?;
 
     let _ = kill_opencode_listeners(&[port_to_stop, 1455]);
+    release_opencode_port(state.inner(), port_to_stop);
 
     for _ in 0..20 {
         if !opencode_health(port_to_stop).await {
@@ -1180,12 +1176,16 @@ async fn opencode_stop(
         sleep(Duration::from_millis(250)).await;
     }
 
-    snapshot_opencode(&app, &state).await
+    snapshot_opencode(&app, &state, run_id.as_str()).await
 }
 
 #[tauri::command]
-async fn opencode_agents(app: AppHandle, state: State<'_, RuntimeState>) -> Result<Value, String> {
-    let status = snapshot_opencode(&app, &state).await?;
+async fn opencode_agents(
+    app: AppHandle,
+    state: State<'_, RuntimeState>,
+    run_id: String,
+) -> Result<Value, String> {
+    let status = snapshot_opencode(&app, &state, run_id.as_str()).await?;
     if !status.running {
         return Err("OpenCode server is not running.".to_string());
     }
@@ -1196,10 +1196,11 @@ async fn opencode_agents(app: AppHandle, state: State<'_, RuntimeState>) -> Resu
 async fn opencode_create_session(
     app: AppHandle,
     state: State<'_, RuntimeState>,
+    run_id: String,
     title: Option<String>,
     directory: Option<String>,
 ) -> Result<Value, String> {
-    let status = snapshot_opencode(&app, &state).await?;
+    let status = snapshot_opencode(&app, &state, run_id.as_str()).await?;
     if !status.running {
         return Err("OpenCode server is not running.".to_string());
     }
@@ -1218,11 +1219,9 @@ async fn opencode_create_session(
     .await?;
 
     if let Some(session_id) = extract_session_id(&response) {
-        let mut opencode = state
-            .opencode
-            .lock()
-            .map_err(|_| "Failed to lock OpenCode state.")?;
-        opencode.session_id = Some(session_id);
+        with_opencode_state(state.inner(), run_id.as_str(), |opencode| {
+            opencode.session_id = Some(session_id);
+        })?;
     }
 
     Ok(response)
@@ -1231,6 +1230,7 @@ async fn opencode_create_session(
 #[tauri::command]
 async fn codex_send_prompt(
     app: AppHandle,
+    run_id: String,
     thread_id: Option<String>,
     text: String,
     system: Option<String>,
@@ -1251,11 +1251,13 @@ async fn codex_send_prompt(
     let binary_for_turn = binary.clone();
     let proxy_for_turn = proxy.clone();
     let stream_for_turn = stream_id.clone();
+    let run_id_for_turn = run_id.clone();
     let join = tokio::task::spawn_blocking(move || {
         let runtime = handle.state::<RuntimeState>();
         run_codex_app_server_turn(
             &handle,
             runtime.inner(),
+            run_id_for_turn.as_str(),
             &directory_for_turn,
             thread_for_turn.as_deref(),
             system_for_turn.as_deref(),
@@ -1281,6 +1283,7 @@ async fn codex_send_prompt(
 async fn claude_send_prompt(
     app: AppHandle,
     _state: State<'_, RuntimeState>,
+    run_id: String,
     session_id: Option<String>,
     text: String,
     system: Option<String>,
@@ -1298,11 +1301,13 @@ async fn claude_send_prompt(
     };
 
     let handle = app.clone();
+    let run_id_for_turn = run_id.clone();
     let join = tokio::task::spawn_blocking(move || {
         let runtime = handle.state::<RuntimeState>();
         run_claude_stream_turn(
             &handle,
             runtime.inner(),
+            run_id_for_turn.as_str(),
             &prompt,
             &directory,
             session_id.as_deref(),
@@ -1326,6 +1331,7 @@ async fn claude_send_prompt(
 #[tauri::command]
 async fn gemini_send_prompt(
     app: AppHandle,
+    run_id: String,
     session_id: Option<String>,
     text: String,
     system: Option<String>,
@@ -1335,6 +1341,7 @@ async fn gemini_send_prompt(
     proxy: Option<String>,
     stream_id: Option<String>,
 ) -> Result<Value, String> {
+    let _ = run_id; // Gemini 已是 per-run 模式（基于 session_id），run_id 仅用于前端追踪
     let prompt = if let Some(system_prompt) = system.filter(|value| !value.trim().is_empty()) {
         compose_codex_design_prompt(&system_prompt, &text)
     } else {
@@ -1370,6 +1377,7 @@ async fn gemini_send_prompt(
 async fn runtime_warmup(
     app: AppHandle,
     state: State<'_, RuntimeState>,
+    run_id: String,
     backend: String,
     directory: Option<String>,
     session_id: Option<String>,
@@ -1380,7 +1388,7 @@ async fn runtime_warmup(
 ) -> Result<Value, String> {
     let backend = backend.trim().to_lowercase();
     if backend == "opencode" {
-        let status = ensure_opencode_ready(&app, &state).await?;
+        let status = ensure_opencode_ready(&app, &state, run_id.as_str()).await?;
         return Ok(json!({
             "backend": "opencode",
             "ready": status.running,
@@ -1390,11 +1398,12 @@ async fn runtime_warmup(
     }
 
     let handle = app.clone();
+    let run_id_for_task = run_id.clone();
     tokio::task::spawn_blocking(move || {
         let runtime = handle.state::<RuntimeState>();
         match backend.as_str() {
             "codex" => {
-                ensure_codex_app_server_client(&handle, runtime.inner(), binary.as_deref(), proxy.as_deref())?;
+                ensure_codex_app_server_client(&handle, runtime.inner(), run_id_for_task.as_str(), binary.as_deref(), proxy.as_deref())?;
                 Ok(json!({
                     "backend": "codex",
                     "ready": true
@@ -1408,6 +1417,7 @@ async fn runtime_warmup(
                 let client = ensure_claude_stream_client(
                     &handle,
                     runtime.inner(),
+                    run_id_for_task.as_str(),
                     cwd,
                     session_id.as_deref(),
                     model.as_deref(),
@@ -1462,10 +1472,11 @@ async fn runtime_warmup(
 async fn opencode_messages(
     app: AppHandle,
     state: State<'_, RuntimeState>,
+    run_id: String,
     session_id: String,
     directory: Option<String>,
 ) -> Result<Value, String> {
-    let status = snapshot_opencode(&app, &state).await?;
+    let status = snapshot_opencode(&app, &state, run_id.as_str()).await?;
     if !status.running {
         return Err("OpenCode server is not running.".to_string());
     }
@@ -1484,19 +1495,15 @@ async fn opencode_messages(
 async fn runtime_list_approvals(
     app: AppHandle,
     state: State<'_, RuntimeState>,
+    run_id: String,
     backend: String,
     session_id: Option<String>,
     directory: Option<String>,
 ) -> Result<Value, String> {
     if backend == "codex" {
-        let client = {
-            let codex = state
-                .codex
-                .lock()
-                .map_err(|_| "Failed to lock Codex App Server state.".to_string())?;
-            codex.client.clone()
-        }
-        .ok_or_else(|| "Codex App Server is not running.".to_string())?;
+        // Codex 共享子进程：approval 列表 / 回传都走共享 client，不按 run_id 分片
+        let client = with_codex_state(state.inner(), CODEX_SHARED_KEY, |codex| codex.client.clone())?
+            .ok_or_else(|| "Codex App Server is not running.".to_string())?;
         return Ok(Value::Array(codex_pending_approvals(&client)));
     }
 
@@ -1513,7 +1520,7 @@ async fn runtime_list_approvals(
         ));
     }
 
-    let status = snapshot_opencode(&app, &state).await?;
+    let status = snapshot_opencode(&app, &state, run_id.as_str()).await?;
     if !status.running {
         return Err("OpenCode server is not running.".to_string());
     }
@@ -1532,6 +1539,7 @@ async fn runtime_list_approvals(
 async fn runtime_reply_approval(
     app: AppHandle,
     state: State<'_, RuntimeState>,
+    run_id: String,
     backend: String,
     session_id: Option<String>,
     approval_id: String,
@@ -1539,14 +1547,9 @@ async fn runtime_reply_approval(
     directory: Option<String>,
 ) -> Result<Value, String> {
     if backend == "codex" {
-        let client = {
-            let codex = state
-                .codex
-                .lock()
-                .map_err(|_| "Failed to lock Codex App Server state.".to_string())?;
-            codex.client.clone()
-        }
-        .ok_or_else(|| "Codex App Server is not running.".to_string())?;
+        // Codex 共享子进程：approval 列表 / 回传都走共享 client，不按 run_id 分片
+        let client = with_codex_state(state.inner(), CODEX_SHARED_KEY, |codex| codex.client.clone())?
+            .ok_or_else(|| "Codex App Server is not running.".to_string())?;
         return reply_codex_approval(&client, approval_id.as_str(), decision.as_str());
     }
 
@@ -1560,7 +1563,7 @@ async fn runtime_reply_approval(
         ));
     }
 
-    let status = snapshot_opencode(&app, &state).await?;
+    let status = snapshot_opencode(&app, &state, run_id.as_str()).await?;
     if !status.running {
         return Err("OpenCode server is not running.".to_string());
     }
@@ -1579,6 +1582,7 @@ async fn runtime_reply_approval(
 async fn opencode_send_prompt(
     app: AppHandle,
     state: State<'_, RuntimeState>,
+    run_id: String,
     session_id: String,
     agent: Option<String>,
     text: String,
@@ -1586,7 +1590,7 @@ async fn opencode_send_prompt(
     directory: Option<String>,
     stream_id: Option<String>,
 ) -> Result<Value, String> {
-    let status = snapshot_opencode(&app, &state).await?;
+    let status = snapshot_opencode(&app, &state, run_id.as_str()).await?;
     if !status.running {
         return Err("OpenCode server is not running.".to_string());
     }
@@ -1686,12 +1690,13 @@ async fn opencode_send_prompt(
 async fn opencode_run_shell(
     app: AppHandle,
     state: State<'_, RuntimeState>,
+    run_id: String,
     session_id: String,
     command: String,
     directory: Option<String>,
     stream_id: Option<String>,
 ) -> Result<Value, String> {
-    let status = snapshot_opencode(&app, &state).await?;
+    let status = snapshot_opencode(&app, &state, run_id.as_str()).await?;
     if !status.running {
         return Err("OpenCode server is not running.".to_string());
     }
@@ -1809,9 +1814,10 @@ fn workspace_shell_exec(directory: String, command: String) -> Result<Value, Str
 async fn opencode_provider_list(
     app: AppHandle,
     state: State<'_, RuntimeState>,
+    run_id: String,
     directory: Option<String>,
 ) -> Result<Value, String> {
-    let status = snapshot_opencode(&app, &state).await?;
+    let status = snapshot_opencode(&app, &state, run_id.as_str()).await?;
     if !status.running {
         return Err("OpenCode server is not running.".to_string());
     }
@@ -1823,9 +1829,10 @@ async fn opencode_provider_list(
 async fn opencode_provider_auth(
     app: AppHandle,
     state: State<'_, RuntimeState>,
+    run_id: String,
     directory: Option<String>,
 ) -> Result<Value, String> {
-    let status = snapshot_opencode(&app, &state).await?;
+    let status = snapshot_opencode(&app, &state, run_id.as_str()).await?;
     if !status.running {
         return Err("OpenCode server is not running.".to_string());
     }
@@ -1844,12 +1851,13 @@ async fn opencode_provider_auth(
 async fn opencode_provider_authorize(
     app: AppHandle,
     state: State<'_, RuntimeState>,
+    run_id: String,
     provider_id: String,
     method: u64,
     directory: Option<String>,
     open_browser: Option<bool>,
 ) -> Result<Value, String> {
-    let status = snapshot_opencode(&app, &state).await?;
+    let status = snapshot_opencode(&app, &state, run_id.as_str()).await?;
     if !status.running {
         return Err("OpenCode server is not running.".to_string());
     }
@@ -1905,9 +1913,10 @@ async fn opencode_auth_diagnostic(provider_id: Option<String>) -> Result<Opencod
 async fn opencode_config_get(
     app: AppHandle,
     state: State<'_, RuntimeState>,
+    run_id: String,
     directory: Option<String>,
 ) -> Result<Value, String> {
-    let status = snapshot_opencode(&app, &state).await?;
+    let status = snapshot_opencode(&app, &state, run_id.as_str()).await?;
     if !status.running {
         return Err("OpenCode server is not running.".to_string());
     }
@@ -1919,9 +1928,10 @@ async fn opencode_config_get(
 async fn opencode_config_providers(
     app: AppHandle,
     state: State<'_, RuntimeState>,
+    run_id: String,
     directory: Option<String>,
 ) -> Result<Value, String> {
-    let status = snapshot_opencode(&app, &state).await?;
+    let status = snapshot_opencode(&app, &state, run_id.as_str()).await?;
     if !status.running {
         return Err("OpenCode server is not running.".to_string());
     }
@@ -1940,10 +1950,11 @@ async fn opencode_config_providers(
 async fn opencode_config_update(
     app: AppHandle,
     state: State<'_, RuntimeState>,
+    run_id: String,
     payload: Value,
     directory: Option<String>,
 ) -> Result<Value, String> {
-    let status = snapshot_opencode(&app, &state).await?;
+    let status = snapshot_opencode(&app, &state, run_id.as_str()).await?;
     if !status.running {
         return Err("OpenCode server is not running.".to_string());
     }
@@ -2064,6 +2075,54 @@ async fn opencode_provider_secret_get(app: AppHandle, provider_id: String) -> Re
         "apiKey": api_key,
         "hasApiKey": !api_key.is_empty()
     }))
+}
+
+// ---------------------------------------------------------------------------
+// 多标签页：清理指定 tab 名下所有运行时子进程
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+async fn runtime_cleanup_tab(
+    state: State<'_, RuntimeState>,
+    run_id: String,
+) -> Result<(), String> {
+    // OpenCode：杀子进程并释放端口槽位
+    let port_to_release = {
+        let mut map = state
+            .opencode
+            .lock()
+            .map_err(|_| "Failed to lock OpenCode state map.")?;
+        if let Some(mut run) = map.remove(run_id.as_str()) {
+            if let Some(child) = run.child.as_mut() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            Some(run.port)
+        } else {
+            None
+        }
+    };
+    if let Some(port) = port_to_release {
+        let _ = kill_opencode_listeners(&[port]);
+        release_opencode_port(state.inner(), port);
+    }
+
+    // Codex 是共享子进程（多 tab 共用一个 app-server，靠 thread_id 区分会话），
+    // 不在单 tab 关闭时杀掉——那样会把正在工作的其它 tab 一起打断。
+    // 共享 client 的停掉时机：登录变更 / 应用退出 / shutdown_runtime_children。
+
+    // Claude：移除 client 并 kill
+    let claude_client = state
+        .claude
+        .lock()
+        .ok()
+        .and_then(|mut map| map.remove(run_id.as_str()))
+        .and_then(|mut s| s.client.take());
+    if let Some(client) = claude_client {
+        kill_claude_stream_client(&client);
+    }
+
+    Ok(())
 }
 
 // ── Update check ─────────────────────────────────────────────
@@ -2297,6 +2356,7 @@ fn main() {
             opencode_send_prompt,
             opencode_run_shell,
             workspace_shell_exec,
+            runtime_cleanup_tab,
             check_for_updates,
             rebuild_menu,
             get_system_locale

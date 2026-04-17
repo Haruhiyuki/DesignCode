@@ -2,23 +2,35 @@
 
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 // ---------------------------------------------------------------------------
 // 核心运行时状态（Tauri managed state）
 // ---------------------------------------------------------------------------
 
+// 多标签页：每个 tab 拥有独立的 run_id，对应独立的后端运行时实例。
+// 当无显式 run_id 时使用 DEFAULT_RUN_ID 兼容老调用路径。
+#[allow(dead_code)]
+pub const DEFAULT_RUN_ID: &str = "default";
+
+// OpenCode 端口分配池：每个 tab 独立 OpenCode 子进程需占用独立端口；
+// 从 OPENCODE_BASE_PORT 起线性分配，关闭 tab 时释放回池。
+pub const OPENCODE_BASE_PORT: u16 = 4096;
+
 #[derive(Default)]
 pub struct RuntimeState {
-    pub opencode: Mutex<OpencodeState>,
-    pub codex: Mutex<CodexAppServerState>,
-    pub claude: Mutex<ClaudeStreamState>,
+    pub opencode: Mutex<HashMap<String, OpencodeState>>,
+    pub codex: Mutex<HashMap<String, CodexAppServerState>>,
+    pub claude: Mutex<HashMap<String, ClaudeStreamState>>,
     pub gemini: Mutex<GeminiAcpState>,
+    // 多 tab OpenCode 端口池：每个 tab 启动 OpenCode 时从 OPENCODE_BASE_PORT 起分配；
+    // 关闭 tab / 子进程时释放回池。
+    pub port_pool: Mutex<HashSet<u16>>,
 }
 
 pub struct OpencodeState {
@@ -33,7 +45,7 @@ impl Default for OpencodeState {
     fn default() -> Self {
         Self {
             child: None,
-            port: 4096,
+            port: OPENCODE_BASE_PORT,
             binary: super::DEFAULT_OPENCODE_BINARY.to_string(),
             session_id: None,
             managed: false,
@@ -282,6 +294,10 @@ pub struct CliStreamEvent {
     pub backend: String,
     pub channel: String,
     pub line: String,
+    // 多标签页路由：前端按 run_id 把事件分发到对应 tab store。
+    // 早期发射点尚未填充时为空字符串，前端按 stream_id 兜底匹配。
+    #[serde(default)]
+    pub run_id: String,
 }
 
 pub struct CliLaunch {
@@ -308,6 +324,121 @@ pub struct UpdateCheckResult {
     pub download_url: Option<String>,
     pub published_at: Option<String>,
     pub check_error: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// per-tab 运行时访问器：HashMap 路由 + 默认条目自动插入
+// ---------------------------------------------------------------------------
+
+fn lock_map<'a, T>(
+    mutex: &'a Mutex<HashMap<String, T>>,
+    label: &str,
+) -> Result<MutexGuard<'a, HashMap<String, T>>, String> {
+    mutex
+        .lock()
+        .map_err(|_| format!("Failed to lock {label} state map."))
+}
+
+/// 在指定 run_id 的 OpencodeState 上执行闭包；条目不存在时按 Default 插入。
+pub fn with_opencode_state<F, R>(state: &RuntimeState, run_id: &str, f: F) -> Result<R, String>
+where
+    F: FnOnce(&mut OpencodeState) -> R,
+{
+    let mut map = lock_map(&state.opencode, "OpenCode")?;
+    let entry = map.entry(run_id.to_string()).or_insert_with(OpencodeState::default);
+    Ok(f(entry))
+}
+
+/// 在指定 run_id 的 CodexAppServerState 上执行闭包；条目不存在时按 Default 插入。
+pub fn with_codex_state<F, R>(state: &RuntimeState, run_id: &str, f: F) -> Result<R, String>
+where
+    F: FnOnce(&mut CodexAppServerState) -> R,
+{
+    let mut map = lock_map(&state.codex, "Codex App Server")?;
+    let entry = map.entry(run_id.to_string()).or_insert_with(CodexAppServerState::default);
+    Ok(f(entry))
+}
+
+/// 在指定 run_id 的 ClaudeStreamState 上执行闭包；条目不存在时按 Default 插入。
+pub fn with_claude_state<F, R>(state: &RuntimeState, run_id: &str, f: F) -> Result<R, String>
+where
+    F: FnOnce(&mut ClaudeStreamState) -> R,
+{
+    let mut map = lock_map(&state.claude, "Claude Stream")?;
+    let entry = map.entry(run_id.to_string()).or_insert_with(ClaudeStreamState::default);
+    Ok(f(entry))
+}
+
+/// 退出阶段使用：尽力遍历 OpenCode HashMap，对每个条目执行回收闭包。
+/// 即使 mutex 被 poison，也会拿到内层数据继续走清理。
+pub fn drain_opencode_states<F>(state: &RuntimeState, mut f: F)
+where
+    F: FnMut(&str, &mut OpencodeState),
+{
+    let map_result = state.opencode.try_lock();
+    match map_result {
+        Ok(mut map) => {
+            for (run_id, run) in map.iter_mut() {
+                f(run_id.as_str(), run);
+            }
+        }
+        Err(std::sync::TryLockError::Poisoned(p)) => {
+            let mut map = p.into_inner();
+            for (run_id, run) in map.iter_mut() {
+                f(run_id.as_str(), run);
+            }
+        }
+        Err(std::sync::TryLockError::WouldBlock) => {}
+    }
+}
+
+pub fn drain_codex_clients(state: &RuntimeState) -> Vec<Arc<CodexAppServerClient>> {
+    let mut out = Vec::new();
+    if let Ok(mut map) = state.codex.try_lock() {
+        for (_, codex) in map.iter_mut() {
+            if let Some(client) = codex.client.take() {
+                out.push(client);
+            }
+        }
+    }
+    out
+}
+
+/// 为指定 run_id 分配一个 OpenCode 端口。如指定 requested 端口直接使用并占位；
+/// 否则从 OPENCODE_BASE_PORT 起线性扫描首个未占用端口。
+pub fn allocate_opencode_port(state: &RuntimeState, requested: Option<u16>) -> u16 {
+    let mut pool = match state.port_pool.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if let Some(port) = requested {
+        pool.insert(port);
+        return port;
+    }
+    let mut candidate = OPENCODE_BASE_PORT;
+    while pool.contains(&candidate) {
+        candidate = candidate.checked_add(1).unwrap_or(OPENCODE_BASE_PORT);
+    }
+    pool.insert(candidate);
+    candidate
+}
+
+pub fn release_opencode_port(state: &RuntimeState, port: u16) {
+    if let Ok(mut pool) = state.port_pool.lock() {
+        pool.remove(&port);
+    }
+}
+
+pub fn drain_claude_clients(state: &RuntimeState) -> Vec<Arc<ClaudeStreamClient>> {
+    let mut out = Vec::new();
+    if let Ok(mut map) = state.claude.try_lock() {
+        for (_, claude) in map.iter_mut() {
+            if let Some(client) = claude.client.take() {
+                out.push(client);
+            }
+        }
+    }
+    out
 }
 
 pub struct MenuLabels {

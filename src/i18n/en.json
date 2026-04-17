@@ -256,6 +256,10 @@
   "topbar.collapseMenu": "Collapse Menu",
   "topbar.expandMenu": "Expand Menu",
 
+  "tab.untitled": "New Design",
+  "tab.newTab": "New Tab",
+  "tab.closeTab": "Close Tab",
+
   "history.dateUnknown": "Creation date unknown",
   "history.createdAt": "Created on {date}",
   "history.timeUnknown": "Time unknown",

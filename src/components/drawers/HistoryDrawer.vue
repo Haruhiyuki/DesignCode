@@ -4,10 +4,12 @@ import { t } from "../../i18n/index.js";
 import { useWorkspaceState } from "../../composables/useWorkspaceState.js";
 import { useSetupConfig } from "../../composables/useSetupConfig.js";
 import { useDesignSession } from "../../composables/useDesignSession.js";
+import { useTabs } from "../../composables/useTabs.js";
 
 const { state, ui } = useWorkspaceState();
 const { hasActiveDesignSession, designLibrary, formatHistoryDate, formatHistoryDateTime } = useSetupConfig();
 const { startNewDesignSession, openDesignRecord, deleteDesignRecord, refreshDesignLibrary, restoreVersion } = useDesignSession();
+const { createTabForNewDesign, openOrCreateForDesign } = useTabs();
 </script>
 
 <template>
@@ -15,7 +17,7 @@ const { startNewDesignSession, openDesignRecord, deleteDesignRecord, refreshDesi
     <p v-if="state.design.createError" class="inline-note inline-note-error">{{ state.design.createError }}</p>
 
     <div class="action-row">
-      <button type="button" class="button button-solid" :disabled="state.design.createBusy" @click="startNewDesignSession">
+      <button type="button" class="button button-solid" :disabled="state.design.createBusy" @click="createTabForNewDesign">
         {{ state.design.createBusy ? t("history.creatingDesign") : t("history.newDesign") }}
       </button>
       <button
@@ -56,7 +58,7 @@ const { startNewDesignSession, openDesignRecord, deleteDesignRecord, refreshDesi
         :key="item.id"
         class="layer-card layer-card-action history-design-card"
         :data-active="item.id === state.design.currentId"
-        @click="openDesignRecord(item.id)"
+        @click="openOrCreateForDesign(item.id)"
       >
         <div class="history-design-card-head">
           <strong>{{ item.title }}</strong>

@@ -1,8 +1,16 @@
 // 桌面端 API 层 — 封装所有 Tauri invoke 调用和 Web fallback。
 // Tauri 环境走 invoke()，浏览器环境走 fetch()。
+import { useTabs } from "../composables/useTabs.js";
 
 function isTauriRuntime() {
   return Boolean(window.__TAURI__?.core?.invoke);
+}
+
+// 多标签页：所有持有运行时子进程的命令都需要带上当前 tab 的 run_id，
+// 后端按 run_id 路由到独立的 OpencodeRun / CodexClient / ClaudeClient 实例。
+function activeRunId() {
+  const id = useTabs().activeTabId.value;
+  return id || "default";
 }
 
 async function invoke(command, payload) {
@@ -12,6 +20,11 @@ async function invoke(command, payload) {
   }
 
   return tauri.core.invoke(command, payload);
+}
+
+// 包装层：对于 per-tab 命令自动注入 runId；调用方无感。
+async function invokePerTab(command, payload = {}) {
+  return invoke(command, { runId: activeRunId(), ...payload });
 }
 
 async function fetchJson(url, options) {
@@ -43,7 +56,7 @@ export async function getCatalog() {
 
 export async function generateDesign(payload) {
   if (isTauriRuntime()) {
-    return invoke("desktop_generate_design", { payload });
+    return invokePerTab("desktop_generate_design", { payload });
   }
 
   return fetchJson("/api/design/generate", {
@@ -55,7 +68,7 @@ export async function generateDesign(payload) {
 
 export async function editDesign(payload) {
   if (isTauriRuntime()) {
-    return invoke("desktop_edit_design", { payload });
+    return invokePerTab("desktop_edit_design", { payload });
   }
 
   return fetchJson("/api/design/edit", {
@@ -268,7 +281,7 @@ export async function getDesktopContext() {
     };
   }
 
-  return invoke("desktop_context");
+  return invokePerTab("desktop_context");
 }
 
 export async function getOpencodeStatus() {
@@ -281,7 +294,7 @@ export async function getOpencodeStatus() {
     };
   }
 
-  return invoke("opencode_status");
+  return invokePerTab("opencode_status");
 }
 
 export async function getCodexStatus(binary) {
@@ -435,7 +448,7 @@ export async function updateCodexSettings(binary, model, reasoningEffort) {
 }
 
 export async function startOpencode(binary, proxy) {
-  return invoke("opencode_start", {
+  return invokePerTab("opencode_start", {
     binary: binary || null,
     proxy: proxy || null,
     port: null
@@ -443,22 +456,22 @@ export async function startOpencode(binary, proxy) {
 }
 
 export async function stopOpencode() {
-  return invoke("opencode_stop");
+  return invokePerTab("opencode_stop");
 }
 
 export async function listOpencodeAgents() {
-  return invoke("opencode_agents");
+  return invokePerTab("opencode_agents");
 }
 
 export async function createOpencodeSession(title, directory) {
-  return invoke("opencode_create_session", {
+  return invokePerTab("opencode_create_session", {
     title: title || null,
     directory: directory || null
   });
 }
 
 export async function sendCodexPrompt({ threadId, text, system, directory, model, reasoningEffort, binary, proxy, streamId }) {
-  return invoke("codex_send_prompt", {
+  return invokePerTab("codex_send_prompt", {
     threadId: threadId || null,
     text,
     system: system || null,
@@ -472,7 +485,7 @@ export async function sendCodexPrompt({ threadId, text, system, directory, model
 }
 
 export async function sendClaudePrompt({ sessionId, text, system, directory, model, effort, binary, proxy, streamId }) {
-  return invoke("claude_send_prompt", {
+  return invokePerTab("claude_send_prompt", {
     sessionId: sessionId || null,
     text,
     system: system || null,
@@ -486,7 +499,7 @@ export async function sendClaudePrompt({ sessionId, text, system, directory, mod
 }
 
 export async function sendGeminiPrompt({ sessionId, text, system, directory, model, binary, proxy, streamId }) {
-  return invoke("gemini_send_prompt", {
+  return invokePerTab("gemini_send_prompt", {
     sessionId: sessionId || null,
     text,
     system: system || null,
@@ -499,7 +512,7 @@ export async function sendGeminiPrompt({ sessionId, text, system, directory, mod
 }
 
 export async function warmRuntimeBackend({ backend, directory, sessionId, model, effort, binary, proxy }) {
-  return invoke("runtime_warmup", {
+  return invokePerTab("runtime_warmup", {
     backend,
     directory: directory || null,
     sessionId: sessionId || null,
@@ -535,19 +548,19 @@ export async function listenDesktopEvent(eventName, handler) {
 }
 
 export async function listOpencodeProviders(directory) {
-  return invoke("opencode_provider_list", {
+  return invokePerTab("opencode_provider_list", {
     directory: directory || null
   });
 }
 
 export async function listOpencodeProviderAuth(directory) {
-  return invoke("opencode_provider_auth", {
+  return invokePerTab("opencode_provider_auth", {
     directory: directory || null
   });
 }
 
 export async function authorizeOpencodeProvider({ providerId, method, directory, openBrowser = false }) {
-  return invoke("opencode_provider_authorize", {
+  return invokePerTab("opencode_provider_authorize", {
     providerId,
     method,
     directory: directory || null,
@@ -562,19 +575,19 @@ export async function getOpencodeAuthDiagnostic(providerId) {
 }
 
 export async function getOpencodeConfig(directory) {
-  return invoke("opencode_config_get", {
+  return invokePerTab("opencode_config_get", {
     directory: directory || null
   });
 }
 
 export async function getOpencodeConfigProviders(directory) {
-  return invoke("opencode_config_providers", {
+  return invokePerTab("opencode_config_providers", {
     directory: directory || null
   });
 }
 
 export async function updateOpencodeConfig({ payload, directory }) {
-  return invoke("opencode_config_update", {
+  return invokePerTab("opencode_config_update", {
     payload,
     directory: directory || null
   });
@@ -597,7 +610,7 @@ export async function getOpencodeStoredApiKey(providerId) {
 }
 
 export async function sendOpencodePrompt({ sessionId, agent, text, system, directory, streamId }) {
-  return invoke("opencode_send_prompt", {
+  return invokePerTab("opencode_send_prompt", {
     sessionId,
     agent: agent || null,
     text,
@@ -608,7 +621,7 @@ export async function sendOpencodePrompt({ sessionId, agent, text, system, direc
 }
 
 export async function runOpencodeShell({ sessionId, command, directory, streamId }) {
-  return invoke("opencode_run_shell", {
+  return invokePerTab("opencode_run_shell", {
     sessionId,
     command,
     directory: directory || null,
@@ -617,7 +630,7 @@ export async function runOpencodeShell({ sessionId, command, directory, streamId
 }
 
 export async function listRuntimeApprovals({ backend, sessionId, directory }) {
-  return invoke("runtime_list_approvals", {
+  return invokePerTab("runtime_list_approvals", {
     backend,
     sessionId: sessionId || null,
     directory: directory || null
@@ -625,7 +638,7 @@ export async function listRuntimeApprovals({ backend, sessionId, directory }) {
 }
 
 export async function replyRuntimeApproval({ backend, sessionId, approvalId, decision, directory }) {
-  return invoke("runtime_reply_approval", {
+  return invokePerTab("runtime_reply_approval", {
     backend,
     sessionId: sessionId || null,
     approvalId,
@@ -642,7 +655,7 @@ export async function runWorkspaceShell({ command, directory }) {
 }
 
 export async function listOpencodeMessages(sessionId, directory) {
-  return invoke("opencode_messages", {
+  return invokePerTab("opencode_messages", {
     sessionId,
     directory: directory || null
   });

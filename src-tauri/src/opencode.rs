@@ -1349,21 +1349,18 @@ pub fn refresh_child_state(state: &mut OpencodeState) {
 pub async fn snapshot_opencode(
     app: &AppHandle,
     state: &tauri::State<'_, RuntimeState>,
+    run_id: &str,
 ) -> Result<OpencodeStatus, String> {
     let root = resolve_project_root(app)?;
-    let (binary, port, managed, session_id) = {
-        let mut opencode = state
-            .opencode
-            .lock()
-            .map_err(|_| "Failed to lock OpenCode state.")?;
-        refresh_child_state(&mut opencode);
+    let (binary, port, managed, session_id) = with_opencode_state(state.inner(), run_id, |opencode| {
+        refresh_child_state(opencode);
         (
             opencode.binary.clone(),
             opencode.port,
             opencode.managed,
             opencode.session_id.clone(),
         )
-    };
+    })?;
     let resolved_binary = resolve_opencode_binary(app, Some(binary.as_str()));
 
     let version = opencode_command_version(&resolved_binary, &root).ok();

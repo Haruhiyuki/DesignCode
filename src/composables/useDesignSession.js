@@ -23,6 +23,7 @@ import { useWorkspaceState } from "./useWorkspaceState.js";
 import { useSetupConfig } from "./useSetupConfig.js";
 import { useConfirmDialog } from "./useConfirmDialog.js";
 import { useConversation } from "./useConversation.js";
+import { useTabs, withTabContext, effectiveActiveTabId } from "./useTabs.js";
 
 // ---------------------------------------------------------------------------
 // 模块级单例 — 从其他 composable 获取依赖
@@ -112,13 +113,25 @@ function setDeps(deps) {
 }
 
 // ---------------------------------------------------------------------------
-// 可编辑 HTML 持久化 — 私有变量
+// 可编辑 HTML 持久化 — 每个 tab 独立的保存状态
 // ---------------------------------------------------------------------------
-
-let editableHtmlSaveTimer = null;
-let editableHtmlSavedSignature = "";
-let editableHtmlSavePromise = null;
-let editableHtmlSaveRerun = false;
+// 旧实现用 4 个模块级 let 变量，切 tab 时会互相干扰（基线不匹配触发空转保存、
+// 一个 tab 的 save timer 被另一个 tab 的切换清掉）。按 tabId 索引的 Map。
+const tabEditableHtmlEntries = new Map();
+function currentTabEditableEntry() {
+  const tabId = effectiveActiveTabId() || "__default__";
+  let entry = tabEditableHtmlEntries.get(tabId);
+  if (!entry) {
+    entry = {
+      saveTimer: null,
+      savedSignature: "",
+      savePromise: null,
+      saveRerun: false,
+    };
+    tabEditableHtmlEntries.set(tabId, entry);
+  }
+  return entry;
+}
 
 // ---------------------------------------------------------------------------
 // 标题编辑 — 私有变量
@@ -285,12 +298,12 @@ async function restoreVersion(index) {
 // ---------------------------------------------------------------------------
 
 function clearEditableHtmlSaveTimer() {
-  if (!editableHtmlSaveTimer) {
+  const entry = currentTabEditableEntry();
+  if (!entry.saveTimer) {
     return;
   }
-
-  window.clearTimeout(editableHtmlSaveTimer);
-  editableHtmlSaveTimer = null;
+  window.clearTimeout(entry.saveTimer);
+  entry.saveTimer = null;
 }
 
 function buildEditableHtmlPayload(options = {}) {
@@ -377,7 +390,7 @@ async function saveEditableHtmlPayload(payload, options = {}) {
 
 function setEditableHtmlBaseline(html = state.currentHtml, updatedAt = "") {
   clearEditableHtmlSaveTimer();
-  editableHtmlSavedSignature = html || "";
+  currentTabEditableEntry().savedSignature = html || "";
   state.inspect.saveError = "";
   state.inspect.lastSavedAt = updatedAt || state.inspect.lastSavedAt || "";
   state.inspect.saveState = state.design.currentId ? "saved" : "idle";
@@ -392,6 +405,7 @@ function syncEditableTextDrafts(entries = editableTextEntries.value) {
 }
 
 async function persistEditableHtmlChanges(force = false, options = {}) {
+  const entry = currentTabEditableEntry();
   const payload = options.payload || buildEditableHtmlPayload();
   const background = Boolean(options.background);
 
@@ -400,27 +414,27 @@ async function persistEditableHtmlChanges(force = false, options = {}) {
   }
 
   const signature = payload.html;
-  if (!force && signature === editableHtmlSavedSignature) {
+  if (!force && signature === entry.savedSignature) {
     return true;
   }
 
   if (options.payload) {
-    if (editableHtmlSavePromise) {
-      await editableHtmlSavePromise;
+    if (entry.savePromise) {
+      await entry.savePromise;
     }
     return saveEditableHtmlPayload(payload, options);
   }
 
-  if (editableHtmlSavePromise) {
-    editableHtmlSaveRerun = true;
+  if (entry.savePromise) {
+    entry.saveRerun = true;
     if (!force) {
       if (!background) {
         state.inspect.saveState = "pending";
       }
       return true;
     }
-    await editableHtmlSavePromise;
-    if (state.currentHtml === editableHtmlSavedSignature) {
+    await entry.savePromise;
+    if (state.currentHtml === entry.savedSignature) {
       return true;
     }
   }
@@ -433,13 +447,13 @@ async function persistEditableHtmlChanges(force = false, options = {}) {
 
   const run = saveEditableHtmlPayload(payload, options);
 
-  editableHtmlSavePromise = run;
+  entry.savePromise = run;
   const result = await run;
-  editableHtmlSavePromise = null;
+  entry.savePromise = null;
 
-  if (editableHtmlSaveRerun) {
-    editableHtmlSaveRerun = false;
-    if (state.currentHtml !== editableHtmlSavedSignature) {
+  if (entry.saveRerun) {
+    entry.saveRerun = false;
+    if (state.currentHtml !== entry.savedSignature) {
       return persistEditableHtmlChanges(force);
     }
   }
@@ -452,13 +466,14 @@ function scheduleEditableHtmlSave() {
     return;
   }
 
-  if (state.currentHtml === editableHtmlSavedSignature) {
+  const entry = currentTabEditableEntry();
+  if (state.currentHtml === entry.savedSignature) {
     return;
   }
 
   clearEditableHtmlSaveTimer();
   state.inspect.saveState = "pending";
-  editableHtmlSaveTimer = window.setTimeout(() => {
+  entry.saveTimer = window.setTimeout(() => {
     persistEditableHtmlChanges(false).catch(() => {});
   }, 900);
 }
@@ -469,7 +484,8 @@ async function flushEditableHtmlChanges() {
     return true;
   }
 
-  if (state.currentHtml === editableHtmlSavedSignature) {
+  const entry = currentTabEditableEntry();
+  if (state.currentHtml === entry.savedSignature) {
     return true;
   }
 
@@ -897,6 +913,12 @@ function applyDesignResult(result, label, options = {}) {
 }
 
 async function generateDesign() {
+  // 捕获发起本次生成的 tab。后续所有 sync 状态写入都通过 withTabContext(origin)
+  // 路由回这个 tab 的 store——用户即使在 await 期间切到别的 tab，生成结果也
+  // 一定回写到原 tab，不会污染当前激活的 tab。
+  const origin = useTabs().activeTabId.value;
+  const scoped = (fn) => withTabContext(origin, fn);
+
   const instruction = state.composer.trim();
   const previousComposer = state.composer;
   const runtimePromptBundle = buildPromptBundleForInstruction(instruction, "generate");
@@ -925,22 +947,30 @@ async function generateDesign() {
   try {
     const flushed = await flushEditableHtmlChanges();
     if (!flushed) {
-      rollbackOptimisticConversationEntry(optimisticEntryId);
-      state.composer = previousComposer;
+      scoped(() => {
+        rollbackOptimisticConversationEntry(optimisticEntryId);
+        state.composer = previousComposer;
+      });
       return;
     }
     await _persistPendingAssetNotes();
-    if (state.desktop.isDesktop) {
+    const desktopBackend = scoped(() => {
+      if (!state.desktop.isDesktop) return null;
       setStatus(t("status.waitingWarmup", { backend: runtimeBackendDisplayName(activeRuntimeBackend.value) }), "busy");
-      await _ensureRuntimeWarmup(activeRuntimeBackend.value);
+      return activeRuntimeBackend.value;
+    });
+    if (desktopBackend) {
+      await _ensureRuntimeWarmup(desktopBackend);
       streamId = _nextCodexStreamId();
-      await _beginCliStream(streamId, activeRuntimeBackend.value, [
+      await scoped(() => _beginCliStream(streamId, desktopBackend, [
         instruction,
         runtimePromptBundle?.userMessage || ""
-      ]);
-      _appendAgentOutputLine(
-        `[${activeRuntimeBackend.value}] Generating design with ${activeModelLabel.value || "default model"}...`
-      );
+      ]));
+      scoped(() => {
+        _appendAgentOutputLine(
+          `[${desktopBackend}] Generating design with ${activeModelLabel.value || "default model"}...`
+        );
+      });
     }
     const result = await requestGenerateDesign(
       buildPayload({
@@ -949,43 +979,51 @@ async function generateDesign() {
         instructionCreatedAt
       })
     );
-    if (streamId) {
-      _endCliStream();
-      _appendAgentOutputLine("");
-      _appendAgentOutputLine(t("status.firstDraftSynced"));
-    }
+    scoped(() => {
+      if (streamId) {
+        _endCliStream();
+        _appendAgentOutputLine("");
+        _appendAgentOutputLine(t("status.firstDraftSynced"));
+      }
+    });
     const assistantCreatedAt = new Date().toISOString();
-    const recoveredBlocks = !state.agent.streamBlocks.length
+    const recoveredBlocks = scoped(() => !state.agent.streamBlocks.length)
       ? await recoverOpencodeConversationBlocks(result)
       : [];
-    if (recoveredBlocks.length) {
-      state.agent.streamBlocks = recoveredBlocks;
-    }
-    const savedStreamBlocks = _serializeConversationBlocksForStorage([...state.agent.streamBlocks]);
-    applyDesignResult(result, "生成", {
-      assistantBlocks: savedStreamBlocks
+    const savedStreamBlocks = scoped(() => {
+      if (recoveredBlocks.length) {
+        state.agent.streamBlocks = recoveredBlocks;
+      }
+      const saved = _serializeConversationBlocksForStorage([...state.agent.streamBlocks]);
+      applyDesignResult(result, "生成", {
+        assistantBlocks: saved
+      });
+      state.composer = "";
+      setStatus(t("status.firstDraftGenerated"), "success", "generate");
+      return saved;
     });
-    if (savedStreamBlocks.length && state.design.currentId) {
+    const currentDesignId = scoped(() => state.design.currentId);
+    if (savedStreamBlocks.length && currentDesignId) {
       const savedStreamBlocksSignature = JSON.stringify(savedStreamBlocks);
       runInBackground(() => syncDesignWorkspaceSnapshot({
-        ...buildPayload({ designId: state.design.currentId }),
+        ...scoped(() => buildPayload({ designId: currentDesignId })),
         assistantBlocks: savedStreamBlocks,
         instructionCreatedAt,
         assistantCreatedAt
       }).then((synced) => {
-        if (synced?.chat) {
-          state.design.chat = synced.chat;
-        }
-        const currentStreamBlocksSignature = JSON.stringify(
-          _serializeConversationBlocksForStorage([...state.agent.streamBlocks])
-        );
-        if (currentStreamBlocksSignature === savedStreamBlocksSignature) {
-          state.agent.streamBlocks = [];
-        }
+        scoped(() => {
+          if (synced?.chat) {
+            state.design.chat = synced.chat;
+          }
+          const currentStreamBlocksSignature = JSON.stringify(
+            _serializeConversationBlocksForStorage([...state.agent.streamBlocks])
+          );
+          if (currentStreamBlocksSignature === savedStreamBlocksSignature) {
+            state.agent.streamBlocks = [];
+          }
+        });
       }).catch(() => {}));
     }
-    state.composer = "";
-    setStatus(t("status.firstDraftGenerated"), "success", "generate");
     runInBackground(async () => {
       await Promise.allSettled([
         refreshDesignLibrary(),
@@ -994,19 +1032,24 @@ async function generateDesign() {
       ]);
     });
   } catch (error) {
-    if (streamId) {
-      _endCliStream();
-    }
-    rollbackOptimisticConversationEntry(optimisticEntryId);
-    state.composer = previousComposer;
-    state.warnings = [error instanceof Error ? error.message : String(error)];
-    setStatus(t("status.generationFailed"), "error", "generate");
+    scoped(() => {
+      if (streamId) {
+        _endCliStream();
+      }
+      rollbackOptimisticConversationEntry(optimisticEntryId);
+      state.composer = previousComposer;
+      state.warnings = [error instanceof Error ? error.message : String(error)];
+      setStatus(t("status.generationFailed"), "error", "generate");
+    });
   } finally {
-    setBusy(false);
+    scoped(() => setBusy(false));
   }
 }
 
 async function editDesign() {
+  const origin = useTabs().activeTabId.value;
+  const scoped = (fn) => withTabContext(origin, fn);
+
   const instruction = state.composer.trim();
   const previousComposer = state.composer;
   const runtimePromptBundle = buildPromptBundleForInstruction(instruction, "edit");
@@ -1041,64 +1084,81 @@ async function editDesign() {
   try {
     const flushed = await flushEditableHtmlChanges();
     if (!flushed) {
-      rollbackOptimisticConversationEntry(optimisticEntryId);
-      state.composer = previousComposer;
+      scoped(() => {
+        rollbackOptimisticConversationEntry(optimisticEntryId);
+        state.composer = previousComposer;
+      });
       return;
     }
     await _persistPendingAssetNotes();
-    if (state.desktop.isDesktop) {
+    const desktopBackend = scoped(() => {
+      if (!state.desktop.isDesktop) return null;
       setStatus(t("status.waitingWarmup", { backend: runtimeBackendDisplayName(activeRuntimeBackend.value) }), "busy");
-      await _ensureRuntimeWarmup(activeRuntimeBackend.value);
+      return activeRuntimeBackend.value;
+    });
+    if (desktopBackend) {
+      await _ensureRuntimeWarmup(desktopBackend);
       streamId = _nextCodexStreamId();
-      await _beginCliStream(streamId, activeRuntimeBackend.value, [
+      await scoped(() => _beginCliStream(streamId, desktopBackend, [
         instruction,
         runtimePromptBundle?.userMessage || ""
-      ]);
-      _appendAgentOutputLine(
-        `[${activeRuntimeBackend.value}] Updating design with ${activeModelLabel.value || "default model"}...`
-      );
+      ]));
+      scoped(() => {
+        _appendAgentOutputLine(
+          `[${desktopBackend}] Updating design with ${activeModelLabel.value || "default model"}...`
+        );
+      });
     }
+    const currentHtmlSnapshot = scoped(() => state.currentHtml);
     const result = await requestEditDesign(buildPayload({
-      currentHtml: state.currentHtml,
+      currentHtml: currentHtmlSnapshot,
       instruction,
       streamId,
       instructionCreatedAt
     }));
-    if (streamId) {
-      _endCliStream();
-      _appendAgentOutputLine("");
-      _appendAgentOutputLine(t("status.editSynced"));
-    }
+    scoped(() => {
+      if (streamId) {
+        _endCliStream();
+        _appendAgentOutputLine("");
+        _appendAgentOutputLine(t("status.editSynced"));
+      }
+    });
     const assistantCreatedAt = new Date().toISOString();
-    const recoveredBlocks = !state.agent.streamBlocks.length
+    const recoveredBlocks = scoped(() => !state.agent.streamBlocks.length)
       ? await recoverOpencodeConversationBlocks(result)
       : [];
-    if (recoveredBlocks.length) {
-      state.agent.streamBlocks = recoveredBlocks;
-    }
-    const savedStreamBlocks = _serializeConversationBlocksForStorage([...state.agent.streamBlocks]);
-    applyDesignResult(result, "编辑", {
-      assistantBlocks: savedStreamBlocks
+    const savedStreamBlocks = scoped(() => {
+      if (recoveredBlocks.length) {
+        state.agent.streamBlocks = recoveredBlocks;
+      }
+      const saved = _serializeConversationBlocksForStorage([...state.agent.streamBlocks]);
+      applyDesignResult(result, "编辑", {
+        assistantBlocks: saved
+      });
+      state.composer = "";
+      setStatus(t("status.editComplete"), "success", "edit");
+      return saved;
     });
-    state.composer = "";
-    setStatus(t("status.editComplete"), "success", "edit");
-    if (savedStreamBlocks.length && state.design.currentId) {
+    const currentDesignId = scoped(() => state.design.currentId);
+    if (savedStreamBlocks.length && currentDesignId) {
       const savedStreamBlocksSignature = JSON.stringify(savedStreamBlocks);
       runInBackground(() => syncDesignWorkspaceSnapshot({
-        ...buildPayload({ designId: state.design.currentId }),
+        ...scoped(() => buildPayload({ designId: currentDesignId })),
         assistantBlocks: savedStreamBlocks,
         instructionCreatedAt,
         assistantCreatedAt
       }).then((synced) => {
-        if (synced?.chat) {
-          state.design.chat = synced.chat;
-        }
-        const currentStreamBlocksSignature = JSON.stringify(
-          _serializeConversationBlocksForStorage([...state.agent.streamBlocks])
-        );
-        if (currentStreamBlocksSignature === savedStreamBlocksSignature) {
-          state.agent.streamBlocks = [];
-        }
+        scoped(() => {
+          if (synced?.chat) {
+            state.design.chat = synced.chat;
+          }
+          const currentStreamBlocksSignature = JSON.stringify(
+            _serializeConversationBlocksForStorage([...state.agent.streamBlocks])
+          );
+          if (currentStreamBlocksSignature === savedStreamBlocksSignature) {
+            state.agent.streamBlocks = [];
+          }
+        });
       }).catch(() => {}));
     }
     runInBackground(async () => {
@@ -1109,15 +1169,17 @@ async function editDesign() {
       ]);
     });
   } catch (error) {
-    if (streamId) {
-      _endCliStream();
-    }
-    rollbackOptimisticConversationEntry(optimisticEntryId);
-    state.composer = previousComposer;
-    state.warnings = [error instanceof Error ? error.message : String(error)];
-    setStatus(t("status.editFailed"), "error", "edit");
+    scoped(() => {
+      if (streamId) {
+        _endCliStream();
+      }
+      rollbackOptimisticConversationEntry(optimisticEntryId);
+      state.composer = previousComposer;
+      state.warnings = [error instanceof Error ? error.message : String(error)];
+      setStatus(t("status.editFailed"), "error", "edit");
+    });
   } finally {
-    setBusy(false);
+    scoped(() => setBusy(false));
   }
 }
 

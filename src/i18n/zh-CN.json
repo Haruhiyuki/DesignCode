@@ -256,6 +256,10 @@
   "topbar.collapseMenu": "收起菜单",
   "topbar.expandMenu": "展开菜单",
 
+  "tab.untitled": "新设计稿",
+  "tab.newTab": "新建标签页",
+  "tab.closeTab": "关闭标签页",
+
   "history.dateUnknown": "创建日期未知",
   "history.createdAt": "创建于 {date}",
   "history.timeUnknown": "时间未知",

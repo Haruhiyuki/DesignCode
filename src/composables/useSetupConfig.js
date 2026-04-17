@@ -15,6 +15,7 @@ import { updateDesignSession as requestUpdateDesignSession } from "../lib/deskto
 import { t, locale } from "../i18n/index.js";
 import { RAIL_ICONS } from "../constants/icons.js";
 import { useWorkspaceState } from "./useWorkspaceState.js";
+import { effectiveActiveTabId } from "./useTabs.js";
 
 const {
   state, ui, viewport, fullscreenEditor,
@@ -1190,11 +1191,30 @@ function syncActiveRuntimeSession() {
 
 // ── 配置持久化 ────────────────────────────────────────────────────────
 
-let designConfigHydrating = false;
-let designConfigSaveTimer = null;
-let designConfigSavedSignature = "";
-let designConfigSavePromise = null;
-let designConfigSaveRerun = false;
+// 每个 tab 各自的保存状态——旧实现用 5 个模块级 let 变量，导致切 tab 时
+// 新 tab 的 signature 和其他 tab 保存下来的 baseline 不匹配，永远触发一次
+// 空转的 pending→saving→saved（右上角转圈）；且一个 tab 的 save timer 会
+// 被另一个 tab 的切换清掉。这里改成按 tabId 索引的 Map。
+const tabSaveEntries = new Map();
+function getTabSaveEntry(tabId) {
+  let entry = tabSaveEntries.get(tabId);
+  if (!entry) {
+    entry = {
+      hydrating: false,
+      savedSignature: "",
+      saveTimer: null,
+      savePromise: null,
+      saveRerun: false,
+    };
+    tabSaveEntries.set(tabId, entry);
+  }
+  return entry;
+}
+function currentTabSaveEntry() {
+  // 用 effectiveActiveTabId 以尊重 withTabContext 的 override。
+  const tabId = effectiveActiveTabId() || "__default__";
+  return getTabSaveEntry(tabId);
+}
 
 function buildDesignConfigPayload(extra = {}) {
   const fallbackDesignName = state.design.currentId || projectTitle.value || "Untitled Design";
@@ -1295,17 +1315,17 @@ function currentDesignConfigSignature() {
 }
 
 function clearDesignConfigSaveTimer() {
-  if (!designConfigSaveTimer) {
+  const save = currentTabSaveEntry();
+  if (!save.saveTimer) {
     return;
   }
-
-  window.clearTimeout(designConfigSaveTimer);
-  designConfigSaveTimer = null;
+  window.clearTimeout(save.saveTimer);
+  save.saveTimer = null;
 }
 
 function setDesignConfigSaveBaseline(updatedAt = "") {
   clearDesignConfigSaveTimer();
-  designConfigSavedSignature = currentDesignConfigSignature();
+  currentTabSaveEntry().savedSignature = currentDesignConfigSignature();
   state.design.saveError = "";
   state.design.lastSavedAt = updatedAt || state.design.lastSavedAt || "";
   state.design.saveState = state.design.currentId ? "saved" : "idle";
@@ -1391,10 +1411,11 @@ async function saveDesignConfigPayload(payload, options = {}) {
 }
 
 async function persistCurrentDesignConfig(force = false, options = {}) {
+  const save = currentTabSaveEntry();
   const payload = options.payload || buildDesignConfigPayload();
   const background = Boolean(options.background);
 
-  if (!payload.designId || designConfigHydrating) {
+  if (!payload.designId || save.hydrating) {
     return true;
   }
 
@@ -1405,23 +1426,23 @@ async function persistCurrentDesignConfig(force = false, options = {}) {
     return true;
   }
 
-  if (!force && signature === designConfigSavedSignature) {
+  if (!force && signature === save.savedSignature) {
     return true;
   }
 
-  if (designConfigSavePromise) {
-    designConfigSaveRerun = true;
+  if (save.savePromise) {
+    save.saveRerun = true;
     if (!force) {
       if (!background) {
         state.design.saveState = "pending";
       }
       return true;
     }
-    await designConfigSavePromise;
+    await save.savePromise;
     const refreshedSignature = options.payload
       ? signature
       : currentDesignConfigSignature();
-    if (!refreshedSignature || refreshedSignature === designConfigSavedSignature) {
+    if (!refreshedSignature || refreshedSignature === save.savedSignature) {
       return true;
     }
   }
@@ -1438,14 +1459,14 @@ async function persistCurrentDesignConfig(force = false, options = {}) {
 
   const run = saveDesignConfigPayload(payload, options);
 
-  designConfigSavePromise = run;
+  save.savePromise = run;
   const result = await run;
-  designConfigSavePromise = null;
+  save.savePromise = null;
 
-  if (designConfigSaveRerun) {
-    designConfigSaveRerun = false;
+  if (save.saveRerun) {
+    save.saveRerun = false;
     const rerunSignature = currentDesignConfigSignature();
-    if (rerunSignature && rerunSignature !== designConfigSavedSignature) {
+    if (rerunSignature && rerunSignature !== save.savedSignature) {
       return persistCurrentDesignConfig(force);
     }
   }
@@ -1454,30 +1475,32 @@ async function persistCurrentDesignConfig(force = false, options = {}) {
 }
 
 function scheduleCurrentDesignConfigSave() {
-  if (!state.design.currentId || designConfigHydrating) {
+  const save = currentTabSaveEntry();
+  if (!state.design.currentId || save.hydrating) {
     return;
   }
 
   const signature = currentDesignConfigSignature();
-  if (!signature || signature === designConfigSavedSignature) {
+  if (!signature || signature === save.savedSignature) {
     return;
   }
 
   clearDesignConfigSaveTimer();
   state.design.saveState = "pending";
-  designConfigSaveTimer = window.setTimeout(() => {
+  save.saveTimer = window.setTimeout(() => {
     persistCurrentDesignConfig(false).catch(() => {});
   }, 450);
 }
 
 async function flushCurrentDesignConfig() {
   clearDesignConfigSaveTimer();
-  if (!state.design.currentId || designConfigHydrating) {
+  const save = currentTabSaveEntry();
+  if (!state.design.currentId || save.hydrating) {
     return true;
   }
 
   const signature = currentDesignConfigSignature();
-  if (!signature || signature === designConfigSavedSignature) {
+  if (!signature || signature === save.savedSignature) {
     return true;
   }
 
@@ -1542,15 +1565,15 @@ function templateFieldDefaults(incomingFields = {}, incomingDefinitions = []) {
 // ── designConfigHydrating 访问器 ─────────────────────────────────────
 
 function getDesignConfigHydrating() {
-  return designConfigHydrating;
+  return currentTabSaveEntry().hydrating;
 }
 
 function setDesignConfigHydrating(value) {
-  designConfigHydrating = value;
+  currentTabSaveEntry().hydrating = value;
 }
 
 function getDesignConfigSavedSignature() {
-  return designConfigSavedSignature;
+  return currentTabSaveEntry().savedSignature;
 }
 
 // ── 导出 ──────────────────────────────────────────────────────────────

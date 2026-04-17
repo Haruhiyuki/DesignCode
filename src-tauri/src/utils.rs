@@ -1127,6 +1127,10 @@ pub fn emit_cli_stream_line(
             backend: backend.to_string(),
             channel: channel.to_string(),
             line: line.to_string(),
+            // 多 tab 路由：当前 emit 链路尚未带上 run_id；前端按 stream_id 兜底分发。
+            // 后续可以让各 backend 模块在创建 stream 时把 run_id 注册到一个映射，
+            // 这里再查映射回填 run_id。先发空字符串维持兼容。
+            run_id: String::new(),
         },
     );
 }

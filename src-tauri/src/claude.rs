@@ -680,6 +680,7 @@ pub fn claude_stream_client_matches(
 pub fn ensure_claude_stream_client(
     app: &AppHandle,
     state: &RuntimeState,
+    run_id: &str,
     directory: &str,
     session_id: Option<&str>,
     model: Option<&str>,
@@ -687,13 +688,7 @@ pub fn ensure_claude_stream_client(
     requested_binary: Option<&str>,
     proxy: Option<&str>,
 ) -> Result<Arc<ClaudeStreamClient>, String> {
-    let existing = {
-        let claude = state
-            .claude
-            .lock()
-            .map_err(|_| "Failed to lock Claude stream state.".to_string())?;
-        claude.client.clone()
-    };
+    let existing = with_claude_state(state, run_id, |claude| claude.client.clone())?;
 
     if let Some(client) = existing {
         if claude_stream_client_matches(
@@ -722,17 +717,16 @@ pub fn ensure_claude_stream_client(
         proxy,
     )?;
 
-    let mut claude = state
-        .claude
-        .lock()
-        .map_err(|_| "Failed to lock Claude stream state.".to_string())?;
-    claude.client = Some(client.clone());
+    with_claude_state(state, run_id, |claude| {
+        claude.client = Some(client.clone());
+    })?;
     Ok(client)
 }
 
 pub fn run_claude_stream_turn(
     app: &AppHandle,
     state: &RuntimeState,
+    run_id: &str,
     prompt: &str,
     directory: &str,
     session_id: Option<&str>,
@@ -745,6 +739,7 @@ pub fn run_claude_stream_turn(
     let client = ensure_claude_stream_client(
         app,
         state,
+        run_id,
         directory,
         session_id,
         model,

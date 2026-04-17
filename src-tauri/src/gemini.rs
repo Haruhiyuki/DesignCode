@@ -976,47 +976,27 @@ pub fn shutdown_runtime_children(app: &AppHandle) {
 
     // 使用 try_lock 避免阻塞：如果其他线程正在持有锁做长操作（如健康检查），
     // lock() 会无限期等待导致退出卡住。try_lock 拿不到就跳过，继续清理其他运行时。
-    let opencode_port = match state.opencode.try_lock() {
-        Ok(mut opencode) => {
-            if let Some(child) = opencode.child.as_mut() {
-                let _ = child.kill();
-                let _ = child.wait();
-            }
-            let port = opencode.port;
-            opencode.child = None;
-            opencode.session_id = None;
-            opencode.managed = false;
-            port
+    // 多 tab 模式下遍历每个 run_id 各自的 OpencodeState，逐一杀掉子进程并收集端口。
+    let runtime: &RuntimeState = state.inner();
+    let mut opencode_ports: Vec<u16> = Vec::new();
+    drain_opencode_states(runtime, |_run_id, opencode| {
+        if let Some(child) = opencode.child.as_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
         }
-        Err(std::sync::TryLockError::Poisoned(poisoned)) => {
-            let mut opencode = poisoned.into_inner();
-            if let Some(child) = opencode.child.as_mut() {
-                let _ = child.kill();
-                let _ = child.wait();
-            }
-            let port = opencode.port;
-            opencode.child = None;
-            port
-        }
-        Err(std::sync::TryLockError::WouldBlock) => 0,
-    };
-    let _ = kill_opencode_listeners(&[opencode_port, 1455]);
+        opencode_ports.push(opencode.port);
+        opencode.child = None;
+        opencode.session_id = None;
+        opencode.managed = false;
+    });
+    opencode_ports.push(1455);
+    let _ = kill_opencode_listeners(&opencode_ports);
 
-    let codex_client = state
-        .codex
-        .try_lock()
-        .ok()
-        .and_then(|mut codex| codex.client.take());
-    if let Some(client) = codex_client {
+    for client in drain_codex_clients(runtime) {
         client.stop();
     }
 
-    let claude_client = state
-        .claude
-        .try_lock()
-        .ok()
-        .and_then(|mut claude| claude.client.take());
-    if let Some(client) = claude_client {
+    for client in drain_claude_clients(runtime) {
         kill_claude_stream_client(&client);
     }
 

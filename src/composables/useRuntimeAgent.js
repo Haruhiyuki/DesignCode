@@ -47,6 +47,7 @@ import { useCliStream } from "./useCliStream.js";
 import { useConversation } from "./useConversation.js";
 import { useDesignSession } from "./useDesignSession.js";
 import { useArtAssets } from "./useArtAssets.js";
+import { useTabs, withTabContext } from "./useTabs.js";
 
 // ---------------------------------------------------------------------------
 // 模块级单例 — 从其他 composable 获取依赖
@@ -1659,6 +1660,9 @@ async function sendActiveCliPrompt({ text, system, streamId }) {
 // ---------------------------------------------------------------------------
 
 async function runAgentPrompt() {
+  const origin = useTabs().activeTabId.value;
+  const scoped = (fn) => withTabContext(origin, fn);
+
   const text = state.agentPrompt.trim();
   if (!text) {
     setStatus(t("status.enterAgentPrompt"), "warning", "input");
@@ -1713,39 +1717,47 @@ async function runAgentPrompt() {
 
     if (activeRuntimeBackend.value !== "opencode") {
       const streamId = nextCodexStreamId();
-      await beginCliStream(streamId, activeRuntimeBackend.value, [
+      await scoped(() => beginCliStream(streamId, activeRuntimeBackend.value, [
         text,
         runtimePromptBundle?.userMessage || ""
-      ]);
-      appendAgentOutputLine(
-        `[${activeRuntimeBackend.value}] Agent is running with ${activeCliModel() || "default model"}`
-        + `${activeCliEffort() ? ` · ${activeCliEffort()}` : ""}...`
-      );
+      ]));
+      scoped(() => {
+        appendAgentOutputLine(
+          `[${activeRuntimeBackend.value}] Agent is running with ${activeCliModel() || "default model"}`
+          + `${activeCliEffort() ? ` · ${activeCliEffort()}` : ""}...`
+        );
+      });
       const result = await sendActiveCliPrompt({
         text,
         system: runtimePromptBundle?.systemPrompt || "",
         streamId
       });
-      endCliStream();
-      const sessionId = result.threadId || result.sessionId || activeRuntimeSessionId.value;
+      const sessionId = scoped(() => {
+        endCliStream();
+        return result.threadId || result.sessionId || activeRuntimeSessionId.value;
+      });
       if (sessionId) {
-        applyCliSessionToState(sessionId);
-        if (state.design.currentId) {
-          await persistDesignSession(state.design.currentId, sessionId, activeRuntimeBackend.value);
+        scoped(() => applyCliSessionToState(sessionId));
+        const currentDesignId = scoped(() => state.design.currentId);
+        if (currentDesignId) {
+          await persistDesignSession(currentDesignId, sessionId, activeRuntimeBackend.value);
         }
       }
 
-      if (result.output) {
-        appendAgentOutputLine("");
-        appendAgentOutputLine(`[final] ${sanitizeAgentConsoleMessage(result.output) || t("chat.requestCompleted")}`);
-      } else if (!state.agent.output) {
-        state.agent.output = t("chat.codexExecuted");
-      }
+      scoped(() => {
+        if (result.output) {
+          appendAgentOutputLine("");
+          appendAgentOutputLine(`[final] ${sanitizeAgentConsoleMessage(result.output) || t("chat.requestCompleted")}`);
+        } else if (!state.agent.output) {
+          state.agent.output = t("chat.codexExecuted");
+        }
+      });
 
-      if (state.design.currentId) {
-        const synced = await syncDesignWorkspaceSnapshot({
+      const currentDesignId = scoped(() => state.design.currentId);
+      if (currentDesignId) {
+        const syncPayload = scoped(() => ({
           ...buildPayload({
-            designId: state.design.currentId,
+            designId: currentDesignId,
             sessionId: sessionId || activeRuntimeSessionId.value
           }),
           instruction: text,
@@ -1757,47 +1769,58 @@ async function runAgentPrompt() {
           ),
           instructionCreatedAt,
           assistantCreatedAt: new Date().toISOString()
-        });
-        applyOpenedDesignRecord(synced, {
-          activeCommitHash: synced.commits?.[synced.commits.length - 1]?.commitHash
+        }));
+        const synced = await syncDesignWorkspaceSnapshot(syncPayload);
+        scoped(() => {
+          applyOpenedDesignRecord(synced, {
+            activeCommitHash: synced.commits?.[synced.commits.length - 1]?.commitHash
+          });
         });
         await refreshDesignLibrary();
       }
-      setStatus(t("status.agentExecuted", { backend: runtimeBackendDisplayName(activeRuntimeBackend.value) }), "success");
+      scoped(() => {
+        setStatus(t("status.agentExecuted", { backend: runtimeBackendDisplayName(activeRuntimeBackend.value) }), "success");
+      });
       return;
     }
 
     if (!state.agent.sessionId) {
       await handleCreateSession();
-      if (!state.agent.sessionId) {
+      if (!scoped(() => state.agent.sessionId)) {
         return;
       }
     }
 
     const streamId = nextCodexStreamId();
-    await beginCliStream(streamId, "opencode", [
+    await scoped(() => beginCliStream(streamId, "opencode", [
       text,
       runtimePromptBundle?.userMessage || ""
-    ]);
-    appendAgentOutputLine("[opencode] Agent is running...");
+    ]));
+    scoped(() => appendAgentOutputLine("[opencode] Agent is running..."));
+    const { opencodeSessionId, opencodeDirectory } = scoped(() => ({
+      opencodeSessionId: state.agent.sessionId,
+      opencodeDirectory: runtimeDirectory.value
+    }));
     const result = await sendOpencodePrompt({
-      sessionId: state.agent.sessionId,
-      agent: state.agent.selectedAgent,
+      sessionId: opencodeSessionId,
+      agent: scoped(() => state.agent.selectedAgent),
       text,
       system: runtimePromptBundle?.systemPrompt || "",
-      directory: runtimeDirectory.value,
+      directory: opencodeDirectory,
       streamId
     });
-    endCliStream();
-    const messages = await listOpencodeMessages(state.agent.sessionId, runtimeDirectory.value);
-    appendAgentOutputLine("");
-    appendAgentOutputLine(`[final] ${sanitizeAgentConsoleMessage(inferAgentText(result)) || t("chat.requestCompleted")}`);
-    const mergedOutput = `${state.agent.output}\n${inferAgentText(messages)}`.trim();
-    state.agent.output = mergedOutput;
-    if (state.design.currentId) {
-      const synced = await syncDesignWorkspaceSnapshot({
+    scoped(() => endCliStream());
+    const messages = await listOpencodeMessages(opencodeSessionId, opencodeDirectory);
+    scoped(() => {
+      appendAgentOutputLine("");
+      appendAgentOutputLine(`[final] ${sanitizeAgentConsoleMessage(inferAgentText(result)) || t("chat.requestCompleted")}`);
+      state.agent.output = `${state.agent.output}\n${inferAgentText(messages)}`.trim();
+    });
+    const currentDesignId = scoped(() => state.design.currentId);
+    if (currentDesignId) {
+      const syncPayload = scoped(() => ({
         ...buildPayload({
-          designId: state.design.currentId,
+          designId: currentDesignId,
           sessionId: state.agent.sessionId
         }),
         instruction: text,
@@ -1806,28 +1829,32 @@ async function runAgentPrompt() {
         summary: inferAgentText(messages) || inferAgentText(result) || "OpenCode workspace updated.",
         instructionCreatedAt,
         assistantCreatedAt: new Date().toISOString()
-      });
-      applyOpenedDesignRecord(synced, {
-        activeCommitHash: synced.commits?.[synced.commits.length - 1]?.commitHash
+      }));
+      const synced = await syncDesignWorkspaceSnapshot(syncPayload);
+      scoped(() => {
+        applyOpenedDesignRecord(synced, {
+          activeCommitHash: synced.commits?.[synced.commits.length - 1]?.commitHash
+        });
       });
       await refreshDesignLibrary();
     }
-    setStatus(t("status.opencodeAgentExecuted"), "success", "connect");
+    scoped(() => setStatus(t("status.opencodeAgentExecuted"), "success", "connect"));
   } catch (error) {
-    if (activeRuntimeBackend.value !== "opencode") {
+    scoped(() => {
       endCliStream();
-    } else {
-      endCliStream();
-    }
-    const message = t("export.agentRunFailed", { error: error instanceof Error ? error.message : String(error) });
-    state.agent.output = state.agent.output ? `${state.agent.output}\n${message}` : message;
-    setStatus(t("status.agentFailed", { backend: runtimeBackendDisplayName(activeRuntimeBackend.value) }), "error");
+      const message = t("export.agentRunFailed", { error: error instanceof Error ? error.message : String(error) });
+      state.agent.output = state.agent.output ? `${state.agent.output}\n${message}` : message;
+      setStatus(t("status.agentFailed", { backend: runtimeBackendDisplayName(activeRuntimeBackend.value) }), "error");
+    });
   } finally {
-    setAgentBusy(false);
+    scoped(() => setAgentBusy(false));
   }
 }
 
 async function runAgentShell() {
+  const origin = useTabs().activeTabId.value;
+  const scoped = (fn) => withTabContext(origin, fn);
+
   const command = state.agentPrompt.trim();
   if (!command) {
     setStatus(t("status.enterShellCommand"), "warning", "input");
@@ -1855,14 +1882,14 @@ async function runAgentShell() {
       return;
     }
     if (activeRuntimeBackend.value !== "opencode") {
-      setStatus(t("status.waitingWarmup", { backend: runtimeBackendDisplayName(activeRuntimeBackend.value) }), "busy");
+      scoped(() => setStatus(t("status.waitingWarmup", { backend: runtimeBackendDisplayName(activeRuntimeBackend.value) }), "busy"));
       await ensureRuntimeWarmup(activeRuntimeBackend.value);
       const streamId = nextCodexStreamId();
-      await beginCliStream(streamId, activeRuntimeBackend.value, [command]);
-      appendAgentOutputLine(
+      await scoped(() => beginCliStream(streamId, activeRuntimeBackend.value, [command]));
+      scoped(() => appendAgentOutputLine(
         `[${activeRuntimeBackend.value}] Running shell task inside agent with ${activeCliModel() || "default model"}`
         + `${activeCliEffort() ? ` · ${activeCliEffort()}` : ""}...`
-      );
+      ));
       const result = await sendActiveCliPrompt({
         text: [
           "[Shell Task]",
@@ -1875,25 +1902,31 @@ async function runAgentShell() {
         system: shellPromptBundle?.systemPrompt || "",
         streamId
       });
-      endCliStream();
-      const sessionId = result.threadId || result.sessionId || activeRuntimeSessionId.value;
+      const sessionId = scoped(() => {
+        endCliStream();
+        return result.threadId || result.sessionId || activeRuntimeSessionId.value;
+      });
       if (sessionId) {
-        applyCliSessionToState(sessionId);
-        if (state.design.currentId) {
-          await persistDesignSession(state.design.currentId, sessionId, activeRuntimeBackend.value);
+        scoped(() => applyCliSessionToState(sessionId));
+        const currentDesignId = scoped(() => state.design.currentId);
+        if (currentDesignId) {
+          await persistDesignSession(currentDesignId, sessionId, activeRuntimeBackend.value);
         }
       }
-      if (result.output) {
-        appendAgentOutputLine("");
-        appendAgentOutputLine(`[final] ${sanitizeAgentConsoleMessage(result.output) || t("chat.shellCompleted")}`);
-      } else if (!state.agent.output) {
-        state.agent.output = t("chat.codexShellExecuted");
-      }
+      scoped(() => {
+        if (result.output) {
+          appendAgentOutputLine("");
+          appendAgentOutputLine(`[final] ${sanitizeAgentConsoleMessage(result.output) || t("chat.shellCompleted")}`);
+        } else if (!state.agent.output) {
+          state.agent.output = t("chat.codexShellExecuted");
+        }
+      });
 
-      if (state.design.currentId) {
-        const synced = await syncDesignWorkspaceSnapshot({
+      const currentDesignId = scoped(() => state.design.currentId);
+      if (currentDesignId) {
+        const syncPayload = scoped(() => ({
           ...buildPayload({
-            designId: state.design.currentId,
+            designId: currentDesignId,
             sessionId: sessionId || activeRuntimeSessionId.value
           }),
           instruction: `shell: ${command}`,
@@ -1904,13 +1937,14 @@ async function runAgentShell() {
           ),
           instructionCreatedAt,
           assistantCreatedAt: new Date().toISOString()
-        });
-        applyOpenedDesignRecord(synced, {
+        }));
+        const synced = await syncDesignWorkspaceSnapshot(syncPayload);
+        scoped(() => applyOpenedDesignRecord(synced, {
           activeCommitHash: synced.commits?.[synced.commits.length - 1]?.commitHash
-        });
+        }));
         await refreshDesignLibrary();
       }
-      setStatus(t("status.shellExecuted", { backend: runtimeBackendDisplayName(activeRuntimeBackend.value) }), "success");
+      scoped(() => setStatus(t("status.shellExecuted", { backend: runtimeBackendDisplayName(activeRuntimeBackend.value) }), "success"));
       return;
     }
 
@@ -1919,32 +1953,39 @@ async function runAgentShell() {
       return;
     }
 
-    setStatus(t("status.waitingOpencodeWarmup"), "busy", "start");
+    scoped(() => setStatus(t("status.waitingOpencodeWarmup"), "busy", "start"));
     await ensureRuntimeWarmup("opencode");
 
-    if (!state.agent.sessionId) {
+    if (!scoped(() => state.agent.sessionId)) {
       await handleCreateSession();
-      if (!state.agent.sessionId) {
+      if (!scoped(() => state.agent.sessionId)) {
         return;
       }
     }
 
     const streamId = nextCodexStreamId();
-    await beginCliStream(streamId, "opencode", [command]);
-    appendAgentOutputLine("[opencode] Running shell task inside agent...");
+    await scoped(() => beginCliStream(streamId, "opencode", [command]));
+    scoped(() => appendAgentOutputLine("[opencode] Running shell task inside agent..."));
+    const { opencodeSessionId, opencodeDirectory } = scoped(() => ({
+      opencodeSessionId: state.agent.sessionId,
+      opencodeDirectory: runtimeDirectory.value
+    }));
     const result = await runOpencodeShell({
-      sessionId: state.agent.sessionId,
+      sessionId: opencodeSessionId,
       command,
-      directory: runtimeDirectory.value,
+      directory: opencodeDirectory,
       streamId
     });
-    endCliStream();
-    appendAgentOutputLine("");
-    appendAgentOutputLine(`[final] ${sanitizeAgentConsoleMessage(inferAgentText(result)) || t("chat.shellCompleted")}`);
-    if (state.design.currentId) {
-      const synced = await syncDesignWorkspaceSnapshot({
+    scoped(() => {
+      endCliStream();
+      appendAgentOutputLine("");
+      appendAgentOutputLine(`[final] ${sanitizeAgentConsoleMessage(inferAgentText(result)) || t("chat.shellCompleted")}`);
+    });
+    const currentDesignId2 = scoped(() => state.design.currentId);
+    if (currentDesignId2) {
+      const syncPayload = scoped(() => ({
         ...buildPayload({
-          designId: state.design.currentId,
+          designId: currentDesignId2,
           sessionId: state.agent.sessionId
         }),
         instruction: `shell: ${command}`,
@@ -1952,21 +1993,26 @@ async function runAgentShell() {
         summary: inferAgentText(result) || "Shell command completed.",
         instructionCreatedAt,
         assistantCreatedAt: new Date().toISOString()
-      });
-      applyOpenedDesignRecord(synced, {
+      }));
+      const synced = await syncDesignWorkspaceSnapshot(syncPayload);
+      scoped(() => applyOpenedDesignRecord(synced, {
         activeCommitHash: synced.commits?.[synced.commits.length - 1]?.commitHash
-      });
+      }));
       await refreshDesignLibrary();
     }
-    state.agent.output = `${state.agent.output}\n${inferAgentText(result)}`.trim();
-    setStatus(t("status.opencodeShellExecuted"), "success", "connect");
+    scoped(() => {
+      state.agent.output = `${state.agent.output}\n${inferAgentText(result)}`.trim();
+      setStatus(t("status.opencodeShellExecuted"), "success", "connect");
+    });
   } catch (error) {
-    endCliStream();
-    const message = t("export.shellRunFailed", { error: error instanceof Error ? error.message : String(error) });
-    state.agent.output = state.agent.output ? `${state.agent.output}\n${message}` : message;
-    setStatus(t("status.shellFailed", { backend: runtimeBackendDisplayName(activeRuntimeBackend.value) }), "error");
+    scoped(() => {
+      endCliStream();
+      const message = t("export.shellRunFailed", { error: error instanceof Error ? error.message : String(error) });
+      state.agent.output = state.agent.output ? `${state.agent.output}\n${message}` : message;
+      setStatus(t("status.shellFailed", { backend: runtimeBackendDisplayName(activeRuntimeBackend.value) }), "error");
+    });
   } finally {
-    setAgentBusy(false);
+    scoped(() => setAgentBusy(false));
   }
 }
 

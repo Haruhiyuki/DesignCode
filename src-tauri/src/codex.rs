@@ -1094,9 +1094,22 @@ pub fn spawn_codex_app_server_client(
     Ok(client)
 }
 
+// Codex app-server 在设计上就是「单进程多 thread_id 并发」模型：
+// 多个 tab 共享同一个 app-server 子进程，靠各自的 thread_id 做会话隔离，
+// turn/start 跨 thread 并发不互相干扰（stdout 事件按 turn_id 路由到每个
+// tab 自己的 mpsc channel）。
+//
+// 早期把 Codex 做成 per-tab 子进程会引发：
+//   1) 多个 codex app-server 同时抢占 ~/.codex/auth.json，OAuth 刷新冲突；
+//   2) 某个 tab 重新登录后，其它 tab 的旧子进程仍然用过期 token；
+//   3) `codex exec --ephemeral`（verify 路径）也会因 auth 文件并发而失败。
+// 因此 Codex 强制使用共享实例，通过 CODEX_SHARED_KEY 固定存放。
+pub const CODEX_SHARED_KEY: &str = "__codex_shared__";
+
 pub fn ensure_codex_app_server_client(
     app: &AppHandle,
     state: &RuntimeState,
+    _run_id: &str,
     requested_binary: Option<&str>,
     proxy: Option<&str>,
 ) -> Result<Arc<CodexAppServerClient>, String> {
@@ -1108,12 +1121,7 @@ pub fn ensure_codex_app_server_client(
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned);
 
-    {
-        let mut codex = state
-            .codex
-            .lock()
-            .map_err(|_| "Failed to lock Codex App Server state.".to_string())?;
-
+    let reusable = with_codex_state(state, CODEX_SHARED_KEY, |codex| {
         let reusable = codex.client.as_ref().and_then(|client| {
             if client.is_alive()
                 && codex.binary == desired_binary
@@ -1124,8 +1132,8 @@ pub fn ensure_codex_app_server_client(
                 None
             }
         });
-        if let Some(client) = reusable {
-            return Ok(client);
+        if reusable.is_some() {
+            return reusable;
         }
 
         if let Some(client) = codex.client.take() {
@@ -1133,20 +1141,31 @@ pub fn ensure_codex_app_server_client(
         }
         codex.binary = desired_binary.clone();
         codex.proxy = desired_proxy.clone();
+        None
+    })?;
+    if let Some(client) = reusable {
+        return Ok(client);
     }
 
     let client = spawn_codex_app_server_client(app, Some(desired_binary.as_str()), desired_proxy.as_deref())?;
-    let mut codex = state
-        .codex
-        .lock()
-        .map_err(|_| "Failed to lock Codex App Server state.".to_string())?;
-    codex.client = Some(client.clone());
+    with_codex_state(state, CODEX_SHARED_KEY, |codex| {
+        codex.client = Some(client.clone());
+    })?;
     Ok(client)
+}
+
+// 登出 / 重新登录后调用：彻底停掉共享 app-server，迫使下一次请求以新 auth 重启。
+pub fn reset_shared_codex_client(state: &RuntimeState) {
+    let client = with_codex_state(state, CODEX_SHARED_KEY, |codex| codex.client.take()).ok().flatten();
+    if let Some(client) = client {
+        client.stop();
+    }
 }
 
 pub fn run_codex_app_server_turn(
     app: &AppHandle,
     state: &RuntimeState,
+    run_id: &str,
     directory: &str,
     existing_thread_id: Option<&str>,
     system_prompt: Option<&str>,
@@ -1157,7 +1176,7 @@ pub fn run_codex_app_server_turn(
     proxy: Option<&str>,
     stream_id: Option<&str>,
 ) -> Result<(String, String), String> {
-    let client = ensure_codex_app_server_client(app, state, requested_binary, proxy)?;
+    let client = ensure_codex_app_server_client(app, state, run_id, requested_binary, proxy)?;
 
     let thread_result = if let Some(thread_id) = existing_thread_id.filter(|value| !value.trim().is_empty()) {
         client.send_request(
