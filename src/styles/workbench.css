@@ -182,12 +182,11 @@ textarea:disabled {
 .topbar-tab-list::-webkit-scrollbar { display: none; }
 
 .topbar-tab {
-  /* Safari 紧凑模式思路：未选中的 tab 紧凑显示（够放一个短名就行），
-     被选中的 tab 更宽以显示完整设计稿名。flex-basis 80px + 收缩系数 2 让
-     未选中 tab 在拥挤时优先变窄；active tab 用更大的 basis + flex-shrink 0
-     保持宽度，直到实在挤不下才开始 ellipsis。 */
+  /* Safari 紧凑模式：tab 宽度 = 标题内容宽度（flex-basis: auto），不做 grow 填充；
+     长度受 min/max-width 约束——短标题时紧贴内容、长标题时顶到 max-width。
+     非激活 tab 上限较窄（160px），且 shrink 系数大（3），多 tab 拥挤时先让位。 */
   position: relative;
-  flex: 1 2 80px;
+  flex: 0 3 auto;
   min-width: 56px;
   max-width: 160px;
   height: 30px;
@@ -213,8 +212,10 @@ textarea:disabled {
 }
 
 .topbar-tab.is-active {
-  /* 被选中：更大的 flex-basis、更大的 max-width，shrink 系数 0 让它不率先让位。 */
-  flex: 2 0 240px;
+  /* 被选中：同样是内容驱动宽度（flex-basis: auto），短标题就是短 tab、长标题才顶到
+     max-width 360px。min-width 160 保证始终能看清名字。
+     shrink 系数 1（普通 tab 是 3）—— 多 tab 拥挤时普通 tab 先让，active 后让。 */
+  flex: 0 1 auto;
   min-width: 160px;
   max-width: 360px;
   background: rgba(240, 106, 60, 0.08);
