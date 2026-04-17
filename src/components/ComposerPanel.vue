@@ -19,7 +19,7 @@ const {
   conversationBlockExpandable, isConversationBlockExpanded, toggleConversationBlock,
   handleConversationBlockAction,
 } = useConversation();
-const { submitConversation, handleComposerKeydown } = useDesignSession();
+const { submitConversation, stopConversation, handleComposerKeydown } = useDesignSession();
 </script>
 
 <template>
@@ -225,13 +225,24 @@ const { submitConversation, handleComposerKeydown } = useDesignSession();
               @keydown="handleComposerKeydown"
             ></textarea>
             <button
+              v-if="state.isBusy"
+              type="button"
+              class="conversation-send-button conversation-stop-button"
+              :title="t('chat.stopTitle')"
+              @click="stopConversation"
+            >
+              <span class="conversation-stop-glyph" aria-hidden="true"></span>
+              {{ t("chat.stop") }}
+            </button>
+            <button
+              v-else
               type="button"
               class="conversation-send-button"
-              :disabled="state.isBusy || !state.composer.trim()"
+              :disabled="!state.composer.trim()"
               :title="conversationPrimaryLabel"
               @click="submitConversation"
             >
-              {{ state.isBusy ? conversationPrimaryBusyLabel : conversationPrimaryLabel }}
+              {{ conversationPrimaryLabel }}
             </button>
           </label>
         </div>

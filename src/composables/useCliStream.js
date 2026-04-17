@@ -819,6 +819,13 @@ export function endCliStreamForTab(tabId) {
   tabStreamListeners.delete(tabId);
 }
 
+// 查询某个 tab 当前活动的流信息（streamId / backend），供 abort 使用
+export function getActiveStreamInfo(tabId) {
+  const handle = tabStreamListeners.get(tabId);
+  if (!handle) return null;
+  return { streamId: handle.streamId, backend: handle.backend };
+}
+
 // ---------------------------------------------------------------------------
 // 导出
 // ---------------------------------------------------------------------------

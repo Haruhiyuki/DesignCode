@@ -2,6 +2,7 @@
 // 依赖 useSetupConfig 提供的配置和 useRuntimeAgent 提供的后端连接。
 import { nextTick } from "vue";
 import {
+  abortRuntimeBackend,
   createDesignSession as requestCreateDesignSession,
   deleteDesignSession as requestDeleteDesignSession,
   generateDesign as requestGenerateDesign,
@@ -1036,13 +1037,23 @@ async function generateDesign() {
       if (streamId) {
         _endCliStream();
       }
-      rollbackOptimisticConversationEntry(optimisticEntryId);
-      state.composer = previousComposer;
-      state.warnings = [error instanceof Error ? error.message : String(error)];
-      setStatus(t("status.generationFailed"), "error", "generate");
+      if (state.agent.userAborted) {
+        // 用户主动停止：保留用户消息和已定格的 agent 消息（含「已停止」标记），
+        // 不写 warnings，不清空 composer，不回滚。session 上下文全部保留。
+        finalizeOptimisticConversationEntry(optimisticEntryId);
+        setStatus(t("status.aborted"), "warning", "abort");
+      } else {
+        rollbackOptimisticConversationEntry(optimisticEntryId);
+        state.composer = previousComposer;
+        state.warnings = [error instanceof Error ? error.message : String(error)];
+        setStatus(t("status.generationFailed"), "error", "generate");
+      }
     });
   } finally {
-    scoped(() => setBusy(false));
+    scoped(() => {
+      setBusy(false);
+      state.agent.userAborted = false;
+    });
   }
 }
 
@@ -1173,13 +1184,21 @@ async function editDesign() {
       if (streamId) {
         _endCliStream();
       }
-      rollbackOptimisticConversationEntry(optimisticEntryId);
-      state.composer = previousComposer;
-      state.warnings = [error instanceof Error ? error.message : String(error)];
-      setStatus(t("status.editFailed"), "error", "edit");
+      if (state.agent.userAborted) {
+        finalizeOptimisticConversationEntry(optimisticEntryId);
+        setStatus(t("status.aborted"), "warning", "abort");
+      } else {
+        rollbackOptimisticConversationEntry(optimisticEntryId);
+        state.composer = previousComposer;
+        state.warnings = [error instanceof Error ? error.message : String(error)];
+        setStatus(t("status.editFailed"), "error", "edit");
+      }
     });
   } finally {
-    scoped(() => setBusy(false));
+    scoped(() => {
+      setBusy(false);
+      state.agent.userAborted = false;
+    });
   }
 }
 
@@ -1193,6 +1212,79 @@ function submitConversation() {
   }
 
   return generateDesign();
+}
+
+// 用户点「停止」：标记 userAborted，把当前已有的 streamBlocks 转成持久化的
+// assistant 消息（附加「已停止」标记 block），通知后端中止。
+//
+// 体验目标：
+//   - 用户上一条提问**保留**在聊天记录里（不会因中止而被回滚）；
+//   - 中止时已流出的内容被固化为一条完整的 agent 消息 + 末尾「已停止」标记；
+//   - 用户再发新消息会在下面追加，**继承会话上下文**（Codex thread_id /
+//     Claude session_id / Gemini session_id / OpenCode session_id 都保留，
+//     下次 run_*_design 会自动 resume）。
+async function stopConversation() {
+  const tabId = useTabs().activeTabId.value;
+  const backend = activeRuntimeBackend.value;
+  let streamInfo = null;
+  try {
+    const mod = await import("./useCliStream.js");
+    streamInfo = mod.getActiveStreamInfo?.(tabId) || null;
+  } catch (_error) {
+    // 忽略
+  }
+
+  const origin = tabId;
+  const scoped = (fn) => withTabContext(origin, fn);
+
+  scoped(() => {
+    state.agent.userAborted = true;
+    // 把当前流式 block 定格为一条 assistant 消息 + 尾部标记
+    finalizePartialConversationAsAborted();
+    setStatus(t("status.aborting"), "warning", "abort");
+  });
+
+  try {
+    await abortRuntimeBackend({
+      backend,
+      sessionId: scoped(() => activeRuntimeSessionId.value || null),
+      streamId: streamInfo?.streamId || null,
+      directory: scoped(() => runtimeDirectory.value || null)
+    });
+  } catch (_error) {
+    // 后端中止失败也继续清前端状态——不让用户卡着
+  }
+}
+
+// 把 state.agent.streamBlocks 里的流式内容收尾为持久化 assistant 消息；
+// 末尾加一个 tone=stopped 的 text block 作为「已停止」视觉标记。
+// 然后清空 streamBlocks——后续新一轮 generate 不会覆盖这段历史。
+function finalizePartialConversationAsAborted() {
+  const blocks = _serializeConversationBlocksForStorage([...(state.agent.streamBlocks || [])]);
+  const abortedMarker = {
+    id: `aborted-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    type: "text",
+    tone: "stopped",
+    content: t("chat.abortedMarker")
+  };
+
+  const id = `local-aborted-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  state.design.chat = [
+    ...(state.design.chat || []),
+    {
+      id,
+      role: "assistant",
+      kind: "agent",
+      text: "",
+      blocks: [...blocks, abortedMarker],
+      createdAt: new Date().toISOString()
+    }
+  ];
+
+  state.agent.streamBlocks = [];
+  state.agent.output = state.agent.output
+    ? `${state.agent.output}\n[aborted]`
+    : "[aborted]";
 }
 
 function handleComposerKeydown(event) {
@@ -1351,6 +1443,7 @@ export function useDesignSession() {
 
     // 提交对话
     submitConversation,
+    stopConversation,
     handleComposerKeydown,
 
     // 样式/尺寸操作

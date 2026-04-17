@@ -523,6 +523,15 @@ export async function warmRuntimeBackend({ backend, directory, sessionId, model,
   });
 }
 
+export async function abortRuntimeBackend({ backend, sessionId, streamId, directory }) {
+  return invokePerTab("runtime_abort", {
+    backend,
+    sessionId: sessionId || null,
+    streamId: streamId || null,
+    directory: directory || null
+  });
+}
+
 export async function listenCliOutput(handler) {
   const tauri = window.__TAURI__;
   if (!tauri?.event?.listen) {

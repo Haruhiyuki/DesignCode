@@ -23,6 +23,7 @@ use opencode::*;
 use reqwest::Method;
 use serde_json::{json, Value};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::time::sleep;
@@ -2125,6 +2126,116 @@ async fn runtime_cleanup_tab(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// 中止当前生成 / 编辑：按 backend 分别做最佳努力终止，让前端 await 立刻失败。
+// - Codex（共享进程）：移除 active_turns 中 stream_id 匹配的 turn，mpsc 通道 drop
+//   后 run_codex_app_server_turn 的 rx.recv_timeout 立刻 Disconnected 报错。
+// - Claude（per-tab 子进程）：杀本 tab 的子进程并 drop pending_turn，同样让 rx 断。
+// - Gemini：遍历 active_runs，找 pending_turn.stream_id 匹配的 run，调 stop()。
+// - OpenCode：POST /session/{session_id}/abort 让本地 opencode 服务停住当前生成。
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+async fn runtime_abort(
+    app: AppHandle,
+    state: State<'_, RuntimeState>,
+    run_id: String,
+    backend: String,
+    session_id: Option<String>,
+    stream_id: Option<String>,
+    directory: Option<String>,
+) -> Result<Value, String> {
+    let backend = backend.trim().to_lowercase();
+    let stream_ref = stream_id.as_deref().unwrap_or("");
+
+    match backend.as_str() {
+        "codex" => {
+            // 共享 codex app-server：按 stream_id 定位本 tab 的 turn；drop 它的 waiter
+            // 让 run_codex_app_server_turn 的 rx 断开、返回 Err。
+            let client = with_codex_state(state.inner(), CODEX_SHARED_KEY, |s| s.client.clone())?;
+            if let Some(client) = client {
+                if let Ok(mut turns) = client.active_turns.lock() {
+                    let matched: Vec<String> = turns
+                        .iter()
+                        .filter_map(|(id, turn)| {
+                            if turn.stream_id.as_deref() == Some(stream_ref) {
+                                Some(id.clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    for id in matched {
+                        turns.remove(&id);
+                    }
+                }
+            }
+        }
+        "claude" => {
+            let client = with_claude_state(state.inner(), run_id.as_str(), |s| s.client.take())?;
+            if let Some(client) = client {
+                // 先 drop pending_turn 里的 waiter，让前端 await 瞬间失败；再杀子进程。
+                if let Ok(mut pending) = client.pending_turn.lock() {
+                    pending.take();
+                }
+                kill_claude_stream_client(&client);
+            }
+        }
+        "gemini" => {
+            // Gemini 的 active_runs 以内部 gemini-run-N 为 key，与 tab run_id 不同。
+            // 按 pending_turn.stream_id 定位，停下匹配的 run。
+            let runs_to_stop: Vec<Arc<GeminiAcpRun>> = if let Ok(gemini) = state.gemini.lock() {
+                gemini
+                    .active_runs
+                    .values()
+                    .filter(|run| {
+                        run.pending_turn
+                            .lock()
+                            .ok()
+                            .and_then(|guard| {
+                                guard.as_ref().and_then(|turn| turn.stream_id.clone())
+                            })
+                            .as_deref()
+                            == Some(stream_ref)
+                    })
+                    .cloned()
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            for run in runs_to_stop {
+                if let Some(turn) = take_gemini_pending_turn(&run.pending_turn) {
+                    drop(turn); // drop waiter → rx Disconnected
+                }
+                run.stop();
+            }
+        }
+        "opencode" => {
+            let status = snapshot_opencode(&app, &state, run_id.as_str()).await?;
+            if !status.running {
+                return Ok(json!({ "aborted": false, "reason": "not-running" }));
+            }
+            let session = session_id
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "Missing session id for opencode abort.".to_string())?;
+            let _ = opencode_request(
+                status.port,
+                Method::POST,
+                &format!("/session/{session}/abort"),
+                None,
+                directory.as_deref(),
+            )
+            .await;
+        }
+        _ => {
+            return Err(format!("{backend} 当前不支持中止。"));
+        }
+    }
+
+    Ok(json!({ "aborted": true }))
+}
+
 // ── Update check ─────────────────────────────────────────────
 
 const UPDATE_CHECK_URL: &str =
@@ -2357,6 +2468,7 @@ fn main() {
             opencode_run_shell,
             workspace_shell_exec,
             runtime_cleanup_tab,
+            runtime_abort,
             check_for_updates,
             rebuild_menu,
             get_system_locale

@@ -122,7 +122,10 @@ export function createWorkspaceStore() {
       outputDesignId: null,
       streamBlocks: [],
       streamDesignId: null,
-      busy: false
+      busy: false,
+      // 用户主动点击「停止」时置 true，让 generateDesign/editDesign 的 catch
+      // 跳过正常错误流程（不回滚用户消息、不写 warnings），改走保留会话的收尾。
+      userAborted: false
     },
     design: {
       items: [],

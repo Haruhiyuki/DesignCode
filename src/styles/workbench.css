@@ -2193,6 +2193,20 @@ textarea:disabled {
   color: #6c6258;
 }
 
+/* 用户主动停止时挂在 agent 消息末端的标记 block —— 视觉上靠近
+   暗红色停止按钮的色系，告诉用户「这段被用户中止了，后续可以继续」。 */
+.agent-block-text[data-tone="stopped"] {
+  border-color: rgba(176, 61, 66, 0.26);
+  background: rgba(255, 245, 244, 0.94);
+  color: #a13438;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.agent-block-text[data-tone="stopped"] p {
+  font-size: 0.82rem;
+}
+
 .agent-block-command {
   overflow: hidden;
   border: 1px solid rgba(39, 33, 26, 0.12);
@@ -2680,6 +2694,34 @@ textarea:disabled {
   cursor: not-allowed;
   opacity: 0.42;
   box-shadow: none;
+}
+
+/* 工作中时用停止按钮覆盖提交按钮。保持相同的尺寸/位置，视觉切到
+   暗红色以提示「中止」操作，中间带一个小正方形图标。 */
+.conversation-stop-button {
+  background: linear-gradient(135deg, #d46466, #b03d42);
+  box-shadow:
+    0 10px 22px rgba(176, 61, 66, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.conversation-stop-button:hover {
+  transform: translateY(-1px);
+  background: linear-gradient(135deg, #d05a5d, #a13438);
+  box-shadow:
+    0 14px 28px rgba(161, 52, 56, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.conversation-stop-glyph {
+  width: 10px;
+  height: 10px;
+  background: #fffaf5;
+  border-radius: 2px;
 }
 
 .field input::placeholder,
