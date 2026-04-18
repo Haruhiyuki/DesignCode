@@ -247,10 +247,18 @@ function formatCodexJsonEvent(event) {
   return eventType ? `[codex] ${eventType}` : null;
 }
 
+// Claude Code 的 stream-json 在每个 turn 结束时会连发两条：
+//   1) assistant 消息里的最后一个 text block（正式回答）
+//   2) result 事件，字段 event.result 和上面那段 text 一字不差
+// 两次都打印会出现"已将奖金改为 2048 元" 连续重复两遍。这里用一个
+// 模块级缓存记录最近 assistant text，在 result 里命中就只发终止标记。
+let _lastClaudeAssistantText = "";
+
 function formatClaudeJsonEvent(event) {
   const eventType = event.type || "";
 
   if (eventType === "system" && event.subtype === "init") {
+    _lastClaudeAssistantText = "";
     return "[claude] Session started";
   }
 
@@ -282,6 +290,7 @@ function formatClaudeJsonEvent(event) {
       if (item?.type === "text") {
         const message = sanitizeAgentLogMessage(item.text || "");
         if (message) {
+          _lastClaudeAssistantText = message;
           return `[message]\n${message}`;
         }
       }
@@ -299,7 +308,15 @@ function formatClaudeJsonEvent(event) {
 
   if (eventType === "result") {
     const result = sanitizeAgentLogMessage(event.result || "");
-    return result ? `[final]\n${result}` : "[claude] Completed";
+    // result 事件的文本几乎总是上一个 assistant text 的复述；命中就只发终止标记，
+    // 避免日志里同一段话连续出现两遍。仅当 result 和 assistant text 不同（极少数
+    // 异常路径）时才把 result 文本也打印出来。
+    if (!result || result === _lastClaudeAssistantText) {
+      _lastClaudeAssistantText = "";
+      return "[claude] Completed";
+    }
+    _lastClaudeAssistantText = "";
+    return `[final]\n${result}`;
   }
 
   if (event.error) {

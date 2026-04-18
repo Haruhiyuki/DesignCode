@@ -646,7 +646,17 @@ function parseCodexStreamBlock(event) {
   return null;
 }
 
+// Claude 每个 turn 结束会连发 assistant text + result 两条同文内容；
+// 不去重会导致对话记录里同一段回答连续出现两遍。用模块级缓存记录上一次
+// assistant text，result 命中就丢掉（日志那条路已经做过相同处理）。
+let _lastClaudeBlockText = "";
+
 function parseClaudeStreamBlock(event) {
+  if (event.type === "system" && event.subtype === "init") {
+    _lastClaudeBlockText = "";
+    return null;
+  }
+
   const approval = resolveApprovalDetails(event);
   if (approval) {
     return approval;
@@ -654,14 +664,17 @@ function parseClaudeStreamBlock(event) {
 
   if (event.type === "result") {
     const content = normalizeConversationMessage(event.result || "");
-    return content
-      ? {
-          id: nextAgentStreamBlockId("text"),
-          type: "text",
-          tone: event.is_error ? "error" : undefined,
-          content
-        }
-      : null;
+    if (!content || content === _lastClaudeBlockText) {
+      _lastClaudeBlockText = "";
+      return null;
+    }
+    _lastClaudeBlockText = "";
+    return {
+      id: nextAgentStreamBlockId("text"),
+      type: "text",
+      tone: event.is_error ? "error" : undefined,
+      content
+    };
   }
 
   if (event.type === "assistant") {
@@ -722,6 +735,7 @@ function parseClaudeStreamBlock(event) {
       if (item?.type === "text") {
         const safeContent = normalizeConversationMessage(item.text || "");
         if (safeContent) {
+          _lastClaudeBlockText = safeContent;
           return {
             id: nextAgentStreamBlockId("text"),
             type: "text",
