@@ -104,98 +104,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: macos-arm64
-          path: src-tauri/target/release/bundle/dist/*
+          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dist/*
           if-no-files-found: error
           retention-days: 7
 
   # ------------------------------------------------------------------
-  # Job 2：macOS Intel 构建 + 公证（只能用 macos-13，它还有 x86_64 硬件）
-  # ------------------------------------------------------------------
-  build-macos-x64:
-    name: Build · macOS x64
-    runs-on: macos-13
-    environment: release
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.tag || github.ref }}
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-apple-darwin
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-
-      - name: Import Apple signing certificate
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ github.run_id }}
-        run: |
-          set -e
-          CERT_PATH=$RUNNER_TEMP/build-cert.p12
-          KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain-db
-          echo -n "$APPLE_CERTIFICATE" | base64 --decode -o "$CERT_PATH"
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -A \
-            -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain
-          security set-key-partition-list -S apple-tool:,apple: -s \
-            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Install bundled runtime CLIs (opencode / codex / gemini)
-        # 固定版本到本地测试过的同版本，避免 CI 拉到更新版带来的行为差异；
-        # 想升级时改这里并同步本地再发版。
-        run: npm install -g opencode-ai@1.2.27 @openai/codex@0.118.0 @google/gemini-cli@0.34.0
-
-      - name: Prepare desktop runtime (sign bundled node binaries)
-        run: node scripts/prepare-desktop-runtime.mjs --sign
-
-      - name: Build Tauri bundle (app)
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: npx tauri build --target x86_64-apple-darwin --bundles app
-
-      - name: Fix bundled signatures
-        env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: node scripts/fix-bundle-signatures.mjs
-
-      - name: Notarize & create DMG + updater tarball
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: node scripts/package-and-notarize.mjs
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos-x64
-          path: src-tauri/target/release/bundle/dist/*
-          if-no-files-found: error
-          retention-days: 7
-
-  # ------------------------------------------------------------------
-  # Job 3：Windows x64 构建
+  # Job 2：Windows x64 构建
+  # （macOS Intel 已弃支 —— Apple Silicon 用户占大多数，且 macos-13 runner 排队长）
   # ------------------------------------------------------------------
   build-windows:
     name: Build · Windows x64
@@ -260,11 +175,11 @@ jobs:
           retention-days: 7
 
   # ------------------------------------------------------------------
-  # Job 4：合并 + 发 GitHub Release + 推 R2 + Purge CF
+  # Job 3：合并 + 发 GitHub Release + 推 R2 + Purge CF
   # ------------------------------------------------------------------
   publish:
     name: Publish
-    needs: [build-macos-arm64, build-macos-x64, build-windows]
+    needs: [build-macos-arm64, build-windows]
     runs-on: ubuntu-latest
     environment: release
     timeout-minutes: 15

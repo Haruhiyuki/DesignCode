@@ -42,13 +42,28 @@ const tauriTarget = `darwin-${tauriArch}`;
 // 路径
 // ---------------------------------------------------------------------------
 
-const bundleBase = path.join(rootDir, "src-tauri", "target", "release", "bundle", "macos");
-const outputDir = path.join(rootDir, "src-tauri", "target", "release", "bundle", "dist");
+// `tauri build --target X` 把 bundle 写到 target/{target}/release/...；无 --target 时在 target/release/...
+function resolveTargetReleaseDir() {
+  const candidates = [path.join(rootDir, "src-tauri", "target", "release")];
+  const targetRoot = path.join(rootDir, "src-tauri", "target");
+  try {
+    for (const entry of readdirSync(targetRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      if (entry.name === "release" || entry.name === "debug") continue;
+      candidates.push(path.join(targetRoot, entry.name, "release"));
+    }
+  } catch {}
+  return candidates.find((candidate) => existsSync(path.join(candidate, "bundle", "macos")));
+}
 
-if (!existsSync(bundleBase)) {
-  console.error("Bundle directory not found:", bundleBase);
+const targetReleaseDir = resolveTargetReleaseDir();
+if (!targetReleaseDir) {
+  console.error("Bundle directory not found under src-tauri/target/**/release/bundle/macos");
   process.exit(1);
 }
+const bundleBase = path.join(targetReleaseDir, "bundle", "macos");
+const outputDir = path.join(targetReleaseDir, "bundle", "dist");
+console.log(`Bundle base: ${path.relative(rootDir, bundleBase)}`);
 
 const appBundles = readdirSync(bundleBase)
   .filter((name) => name.endsWith(".app"))

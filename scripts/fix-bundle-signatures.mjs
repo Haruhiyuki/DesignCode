@@ -22,11 +22,29 @@ if (!existsSync(entitlementsPath)) {
   process.exit(1);
 }
 
-const bundleBase = path.join(rootDir, "src-tauri", "target", "release", "bundle", "macos");
-if (!existsSync(bundleBase)) {
-  console.error("Bundle directory not found:", bundleBase);
+// `tauri build --target X` 会把产物写到 target/{target}/release/bundle/macos；
+// 不带 --target 时写到 target/release/bundle/macos。两处都要找。
+function resolveBundleBase() {
+  const candidates = [
+    path.join(rootDir, "src-tauri", "target", "release", "bundle", "macos")
+  ];
+  const targetRoot = path.join(rootDir, "src-tauri", "target");
+  try {
+    for (const entry of readdirSync(targetRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      if (entry.name === "release" || entry.name === "debug") continue;
+      candidates.push(path.join(targetRoot, entry.name, "release", "bundle", "macos"));
+    }
+  } catch {}
+  return candidates.find((candidate) => existsSync(candidate));
+}
+
+const bundleBase = resolveBundleBase();
+if (!bundleBase) {
+  console.error("Bundle directory not found under src-tauri/target/**/release/bundle/macos");
   process.exit(1);
 }
+console.log(`Bundle base: ${path.relative(rootDir, bundleBase)}`);
 
 const appBundles = readdirSync(bundleBase)
   .filter((name) => name.endsWith(".app"))
