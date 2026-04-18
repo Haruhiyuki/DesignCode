@@ -85,15 +85,44 @@ const currentBranch = execSync("git rev-parse --abbrev-ref HEAD", {
   cwd: rootDir,
   encoding: "utf8"
 }).trim();
-if (currentBranch !== "main" && !dryRun) {
-  fail(`当前分支是 ${currentBranch}，发版必须在 main 上。`);
+
+// 自动检测远端默认分支（main / master / 别的），而不是硬编码 "main"。
+function resolveDefaultBranch() {
+  // 先问 origin/HEAD 指向哪
+  try {
+    const ref = execSync("git symbolic-ref --short refs/remotes/origin/HEAD", {
+      cwd: rootDir,
+      encoding: "utf8"
+    }).trim();
+    // 形如 "origin/master"，去掉 origin/ 前缀
+    const parts = ref.split("/");
+    if (parts.length >= 2) return parts.slice(1).join("/");
+  } catch {}
+  // 兜底：尝试 ls-remote 看哪个分支存在
+  try {
+    const raw = execSync("git ls-remote --symref origin HEAD", {
+      cwd: rootDir,
+      encoding: "utf8"
+    });
+    const match = raw.match(/^ref:\s*refs\/heads\/(\S+)\s+HEAD/m);
+    if (match) return match[1];
+  } catch {}
+  // 最后兜底：用当前分支
+  return currentBranch;
+}
+
+const defaultBranch = resolveDefaultBranch();
+info(`检测到远端默认分支：${defaultBranch}`);
+
+if (currentBranch !== defaultBranch && !dryRun) {
+  fail(`当前分支是 ${currentBranch}，发版必须在 ${defaultBranch} 上。`);
 }
 
 if (!dryRun) {
-  info("拉取远端确认同步...");
-  execSync("git fetch origin main", { cwd: rootDir, stdio: "inherit" });
+  info(`拉取远端确认同步（origin/${defaultBranch}）...`);
+  execSync(`git fetch origin ${defaultBranch}`, { cwd: rootDir, stdio: "inherit" });
   const behindAhead = execSync(
-    "git rev-list --left-right --count HEAD...origin/main",
+    `git rev-list --left-right --count HEAD...origin/${defaultBranch}`,
     { cwd: rootDir, encoding: "utf8" }
   ).trim();
   const [ahead, behind] = behindAhead.split(/\s+/).map(Number);
@@ -203,8 +232,8 @@ if (!dryRun) {
   }
 }
 
-info("推送 main + tag 到 origin...");
-run("git push origin main");
+info(`推送 ${defaultBranch} + tag 到 origin...`);
+run(`git push origin ${defaultBranch}`);
 run(`git push origin ${tagName}`);
 
 console.log(`
