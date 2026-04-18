@@ -7,6 +7,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMzNTAwNTEzMTg2NzEzQUYKUldTdkUyY1lFd1ZRd3dJWWdFOE91SHRFZ1dITStsTEFWOWlLL2E4N3ZFVW1EaXBLTTRxa2xnb0UK",
       "endpoints": [
+        "https://designcode.harucdn.com/latest.json",
         "https://github.com/haruhiyuki/DesignCode/releases/latest/download/latest.json"
       ],
       "windows": {

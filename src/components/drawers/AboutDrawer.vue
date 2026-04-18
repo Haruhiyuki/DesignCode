@@ -1,11 +1,24 @@
 <script setup>
 // 关于抽屉 — 版本信息、更新检查。
+import { ref, onMounted } from "vue";
 import { t } from "../../i18n/index.js";
 import { useWorkspaceState } from "../../composables/useWorkspaceState.js";
 import { useAppUpdate } from "../../composables/useAppUpdate.js";
 
 const { state } = useWorkspaceState();
 const { updateState, doCheckForUpdates, doInstallUpdate, doRelaunch, openUpdateUrl } = useAppUpdate();
+
+// 版本号从 Tauri 运行时读取——唯一的真实源是 tauri.conf.json（由发版脚本统一改写）。
+// 不再硬编码 fallback，避免每次 bump 漏改。
+const runtimeVersion = ref("");
+onMounted(async () => {
+  try {
+    const mod = await import("@tauri-apps/api/app");
+    runtimeVersion.value = await mod.getVersion();
+  } catch (_error) {
+    runtimeVersion.value = "";
+  }
+});
 </script>
 
 <template>
@@ -13,7 +26,7 @@ const { updateState, doCheckForUpdates, doInstallUpdate, doRelaunch, openUpdateU
     <div class="about-hero">
       <img class="about-logo-img" src="/src-tauri/icons/128x128.png" alt="DesignCode" />
       <h3 class="about-name">DesignCode</h3>
-      <p class="about-version">v{{ updateState.result?.currentVersion || '1.0.3' }}</p>
+      <p class="about-version">v{{ updateState.result?.currentVersion || runtimeVersion || "—" }}</p>
       <p class="about-tagline">{{ t("about.tagline") }}</p>
     </div>
 

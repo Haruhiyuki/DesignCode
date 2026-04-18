@@ -33,3 +33,4 @@ test-out.json
 # OS / editor noise
 .DS_Store
 Thumbs.db
+docs/RELEASE.md

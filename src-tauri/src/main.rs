@@ -2238,8 +2238,41 @@ async fn runtime_abort(
 
 // ── Update check ─────────────────────────────────────────────
 
-const UPDATE_CHECK_URL: &str =
-    "https://api.github.com/repos/haruhiyuki/DesignCode/releases/latest";
+// 「检查更新」走的是和 tauri-plugin-updater 相同的 latest.json，
+// 从 UPDATE_CHECK_ENDPOINTS 按顺序 fallback：R2 优先（国内更快、更稳），
+// 失败再退回 GitHub Release。两份 JSON 内容的 signature / version / notes / pub_date 相同，
+// 只是 platforms[*].url 字段指向不同源——命中哪边就走哪边的下载。
+const UPDATE_CHECK_ENDPOINTS: &[&str] = &[
+    "https://designcode.harucdn.com/latest.json",
+    "https://github.com/haruhiyuki/DesignCode/releases/latest/download/latest.json",
+];
+
+// latest.json schema（和 tauri-plugin-updater 标准一致）：
+// {
+//   "version": "1.0.4",
+//   "notes": "...",
+//   "pub_date": "2026-...",
+//   "platforms": {
+//     "darwin-aarch64": { "signature": "...", "url": "https://..." },
+//     "darwin-x86_64":  { ... },
+//     "windows-x86_64": { ... }
+//   }
+// }
+fn latest_json_platform_key() -> &'static str {
+    if cfg!(target_os = "macos") {
+        if cfg!(target_arch = "aarch64") {
+            "darwin-aarch64"
+        } else {
+            "darwin-x86_64"
+        }
+    } else if cfg!(target_os = "windows") {
+        "windows-x86_64"
+    } else if cfg!(target_os = "linux") {
+        "linux-x86_64"
+    } else {
+        ""
+    }
+}
 
 fn version_is_newer(current: &str, latest: &str) -> bool {
     let parse = |s: &str| -> Vec<u64> {
@@ -2253,25 +2286,6 @@ fn version_is_newer(current: &str, latest: &str) -> bool {
     l > c
 }
 
-fn find_platform_asset(assets: &Value) -> Option<String> {
-    let assets = assets.as_array()?;
-    let suffix = if cfg!(target_os = "macos") {
-        ".dmg"
-    } else if cfg!(target_os = "windows") {
-        ".msi"
-    } else {
-        ".AppImage"
-    };
-    for asset in assets {
-        if let Some(name) = asset["name"].as_str() {
-            if name.ends_with(suffix) {
-                return asset["browser_download_url"].as_str().map(String::from);
-            }
-        }
-    }
-    None
-}
-
 #[tauri::command]
 async fn check_for_updates(app: AppHandle, proxy: Option<String>) -> Result<UpdateCheckResult, String> {
     let current_version = app
@@ -2281,7 +2295,7 @@ async fn check_for_updates(app: AppHandle, proxy: Option<String>) -> Result<Upda
         .unwrap_or_else(|| "0.0.0".to_string());
 
     let mut builder = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
+        .timeout(std::time::Duration::from_secs(10))
         .user_agent(format!("DesignCode/{current_version}"));
 
     if let Some(proxy_url) = resolve_proxy_value(proxy.as_deref()) {
@@ -2292,57 +2306,81 @@ async fn check_for_updates(app: AppHandle, proxy: Option<String>) -> Result<Upda
 
     let client = builder.build().map_err(|e| e.to_string())?;
 
-    let response = client.get(UPDATE_CHECK_URL).send().await;
+    // 依次尝试每个 endpoint，第一个成功的用它；全失败时把最后一次错误返回。
+    let mut last_error: Option<String> = None;
+    for endpoint in UPDATE_CHECK_ENDPOINTS {
+        match client.get(*endpoint).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                match resp.json::<Value>().await {
+                    Ok(body) => {
+                        let latest_version = body["version"]
+                            .as_str()
+                            .unwrap_or("")
+                            .trim_start_matches('v')
+                            .to_string();
+                        let notes = body["notes"].as_str().map(String::from);
+                        let published = body["pub_date"].as_str().map(String::from);
 
-    match response {
-        Ok(resp) => {
-            if !resp.status().is_success() {
-                return Ok(UpdateCheckResult {
-                    current_version,
-                    latest_version: None,
-                    update_available: false,
-                    release_url: None,
-                    release_notes: None,
-                    download_url: None,
-                    published_at: None,
-                    check_error: Some(format!("HTTP {}", resp.status())),
-                });
+                        let plat_key = latest_json_platform_key();
+                        let download_url = body
+                            .get("platforms")
+                            .and_then(|p| p.get(plat_key))
+                            .and_then(|entry| entry.get("url"))
+                            .and_then(Value::as_str)
+                            .map(String::from);
+
+                        // release_url：尝试从 endpoint 里推导（R2 的话指向其 base，
+                        // GitHub 的话指向 releases/tag）——对用户来说点了是进「看版本页」。
+                        let release_url = if endpoint.contains("github.com") {
+                            Some(format!(
+                                "https://github.com/haruhiyuki/DesignCode/releases/tag/v{latest_version}"
+                            ))
+                        } else {
+                            download_url.clone()
+                        };
+
+                        let update_available =
+                            !latest_version.is_empty() && version_is_newer(&current_version, &latest_version);
+
+                        return Ok(UpdateCheckResult {
+                            current_version,
+                            latest_version: if latest_version.is_empty() {
+                                None
+                            } else {
+                                Some(latest_version)
+                            },
+                            update_available,
+                            release_url,
+                            release_notes: notes,
+                            download_url,
+                            published_at: published,
+                            check_error: None,
+                        });
+                    }
+                    Err(e) => {
+                        last_error = Some(format!("{endpoint}: invalid JSON ({e})"));
+                    }
+                }
             }
-
-            let body: Value = resp.json().await.map_err(|e| e.to_string())?;
-            let latest_tag = body["tag_name"]
-                .as_str()
-                .unwrap_or("")
-                .trim_start_matches('v')
-                .to_string();
-            let html_url = body["html_url"].as_str().map(String::from);
-            let notes = body["body"].as_str().map(String::from);
-            let published = body["published_at"].as_str().map(String::from);
-            let download_url = find_platform_asset(&body["assets"]);
-            let update_available = version_is_newer(&current_version, &latest_tag);
-
-            Ok(UpdateCheckResult {
-                current_version,
-                latest_version: if latest_tag.is_empty() { None } else { Some(latest_tag) },
-                update_available,
-                release_url: html_url,
-                release_notes: notes,
-                download_url,
-                published_at: published,
-                check_error: None,
-            })
+            Ok(resp) => {
+                last_error = Some(format!("{endpoint}: HTTP {}", resp.status()));
+            }
+            Err(e) => {
+                last_error = Some(format!("{endpoint}: {e}"));
+            }
         }
-        Err(e) => Ok(UpdateCheckResult {
-            current_version,
-            latest_version: None,
-            update_available: false,
-            release_url: None,
-            release_notes: None,
-            download_url: None,
-            published_at: None,
-            check_error: Some(e.to_string()),
-        }),
     }
+
+    Ok(UpdateCheckResult {
+        current_version,
+        latest_version: None,
+        update_available: false,
+        release_url: None,
+        release_notes: None,
+        download_url: None,
+        published_at: None,
+        check_error: last_error.or_else(|| Some("All update endpoints failed.".to_string())),
+    })
 }
 
 #[tauri::command]

@@ -26,8 +26,15 @@ async function doCheckForUpdates(proxyValue) {
     updateState.result = await checkForUpdates(proxyValue || null);
     updateState.lastChecked = Date.now();
   } catch (e) {
+    // 真实版本号由 Tauri 运行时决定；这里兜底字段不再硬编码（写死的字符串
+    // 每次 bump 都得记得改，容易漏）。留空由调用方补默认 "—"。
+    let runtimeVersion = "";
+    try {
+      const mod = await import("@tauri-apps/api/app");
+      runtimeVersion = await mod.getVersion();
+    } catch {}
     updateState.result = {
-      currentVersion: "1.0.3",
+      currentVersion: runtimeVersion,
       updateAvailable: false,
       checkError: e.message || String(e)
     };
