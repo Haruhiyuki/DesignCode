@@ -91,7 +91,15 @@ function seedStateFromPrimary(newStore, primaryStore) {
   ns.desktop = { ...ps.desktop, currentSessionId: null };
 
   ns.design.items = ps.design.items;
+  // 素材库是应用级共享（同一个后端目录），新 tab 不必重新 list + 重新加载缩略图。
+  // items 本身是引用共享；缩略图缓存 / 名称草稿 / 备注草稿必须浅拷贝过去，
+  // 否则新 tab 的 AssetsDrawer 只能看到素材列表但缩略图和名字全是空
+  // （因为 listArtAssets 只在 refreshArtAssetLibrary 里走，新 tab 不会再跑一次）。
+  // selectedIds 是"当前设计用了哪些素材"，per-design，新 tab 保持空。
   ns.assets.items = ps.assets.items;
+  ns.assets.previewUrls = { ...(ps.assets.previewUrls || {}) };
+  ns.assets.nameDrafts = { ...(ps.assets.nameDrafts || {}) };
+  ns.assets.noteDrafts = { ...(ps.assets.noteDrafts || {}) };
 
   const fields = [
     "backend", "installed", "version", "running", "port", "binary", "proxy",
