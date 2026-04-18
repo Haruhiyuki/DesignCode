@@ -249,6 +249,13 @@ function syncVersionsFromCommits(commits, activeCommitHash = null) {
 }
 
 async function restoreVersion(index) {
+  // 发起点击所在 tab。await readDesignCommit 期间用户若切到别的 tab，
+  // 之后的 state 写入经 proxy 路由会落到错 tab，本 tab 画布看不到更新。
+  // 用 withTabContext 把后续同步块锁到 originating tab 的 store。
+  const { activeTabId } = useTabs();
+  const origin = activeTabId.value;
+  const scoped = (fn) => withTabContext(origin, fn);
+
   const snapshot = state.versions[index];
   if (!snapshot) {
     return;
@@ -260,39 +267,55 @@ async function restoreVersion(index) {
 
   queuePendingWorkspaceStatePersistence();
 
-  const record = await readDesignCommit(state.design.currentId, snapshot.commitHash);
-  setDesignConfigHydrating(true);
+  let record;
   try {
-    state.activeVersionIndex = index;
-    state.design.activeCommitHash = snapshot.commitHash;
-    state.design.browsingHistory = snapshot.commitHash !== latestCommit.value?.commitHash;
-    state.currentHtml = record.html;
-    state.inspect.drafts = {};
-    state.currentMeta = normalizeMeta(record.meta || record.design?.currentMeta || state.currentMeta);
-    state.design.chat = record.chat || state.design.chat;
-    state.assets.selectedIds = Array.isArray(record.design?.selectedAssetIds)
-      ? [...record.design.selectedAssetIds]
-      : state.assets.selectedIds;
-    if (RUNTIME_BACKEND_OPTIONS.value.some((item) => item.id === record.design?.runtimeBackend)) {
-      state.agent.backend = record.design.runtimeBackend;
-    }
-    if (record.design?.title) {
-      state.design.currentName = record.design.title;
-    }
-    state.design.runtimeSessions = {
-      opencode: record.design?.runtimeSessions?.opencode || record.design?.sessionId || state.design.runtimeSessions.opencode,
-      codex: record.design?.runtimeSessions?.codex || state.design.runtimeSessions.codex,
-      claude: record.design?.runtimeSessions?.claude || state.design.runtimeSessions.claude,
-      gemini: record.design?.runtimeSessions?.gemini || state.design.runtimeSessions.gemini
-    };
-    syncActiveRuntimeSession();
-    _hydrateFromMeta(state.currentMeta);
-  } finally {
-    setDesignConfigHydrating(false);
+    record = await readDesignCommit(state.design.currentId, snapshot.commitHash);
+  } catch (error) {
+    // 之前没有 catch，后端失败时 promise rejection 被 Vue 吞掉，
+    // 表现就是"点击没反应"。现在显式报错到状态栏。
+    scoped(() => {
+      setStatus(
+        `restore failed: ${error instanceof Error ? error.message : String(error)}`,
+        "error"
+      );
+    });
+    return;
   }
-  setEditableHtmlBaseline(record.html || "", record.design?.updatedAt || "");
-  setDesignConfigSaveBaseline(record.design?.updatedAt || "");
-  setStatus(t("status.restored", { id: snapshot.id }), "idle");
+
+  scoped(() => {
+    setDesignConfigHydrating(true);
+    try {
+      state.activeVersionIndex = index;
+      state.design.activeCommitHash = snapshot.commitHash;
+      state.design.browsingHistory = snapshot.commitHash !== latestCommit.value?.commitHash;
+      state.currentHtml = record.html;
+      state.inspect.drafts = {};
+      state.currentMeta = normalizeMeta(record.meta || record.design?.currentMeta || state.currentMeta);
+      state.design.chat = record.chat || state.design.chat;
+      state.assets.selectedIds = Array.isArray(record.design?.selectedAssetIds)
+        ? [...record.design.selectedAssetIds]
+        : state.assets.selectedIds;
+      if (RUNTIME_BACKEND_OPTIONS.value.some((item) => item.id === record.design?.runtimeBackend)) {
+        state.agent.backend = record.design.runtimeBackend;
+      }
+      if (record.design?.title) {
+        state.design.currentName = record.design.title;
+      }
+      state.design.runtimeSessions = {
+        opencode: record.design?.runtimeSessions?.opencode || record.design?.sessionId || state.design.runtimeSessions.opencode,
+        codex: record.design?.runtimeSessions?.codex || state.design.runtimeSessions.codex,
+        claude: record.design?.runtimeSessions?.claude || state.design.runtimeSessions.claude,
+        gemini: record.design?.runtimeSessions?.gemini || state.design.runtimeSessions.gemini
+      };
+      syncActiveRuntimeSession();
+      _hydrateFromMeta(state.currentMeta);
+    } finally {
+      setDesignConfigHydrating(false);
+    }
+    setEditableHtmlBaseline(record.html || "", record.design?.updatedAt || "");
+    setDesignConfigSaveBaseline(record.design?.updatedAt || "");
+    setStatus(t("status.restored", { id: snapshot.id }), "idle");
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -761,7 +784,10 @@ async function startNewDesignSession() {
 // ---------------------------------------------------------------------------
 
 function queuePendingWorkspaceStatePersistence() {
-  const htmlDirty = Boolean(state.design.currentId && state.currentHtml && state.currentHtml !== editableHtmlSavedSignature);
+  // editableHtmlSavedSignature 在多标签改造里被下沉到 per-tab 的 currentTabEditableEntry()，
+  // 但这个函数漏改了，运行到这里会抛 ReferenceError，连带让调用方（restoreVersion / 切版本）整体挂掉。
+  const savedSignature = currentTabEditableEntry().savedSignature || "";
+  const htmlDirty = Boolean(state.design.currentId && state.currentHtml && state.currentHtml !== savedSignature);
   const configPayload = buildDesignConfigPayload();
   const configDirty = Boolean(
     configPayload.designId &&
