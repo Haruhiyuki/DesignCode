@@ -267,6 +267,7 @@ async function restoreVersion(index) {
     state.design.activeCommitHash = snapshot.commitHash;
     state.design.browsingHistory = snapshot.commitHash !== latestCommit.value?.commitHash;
     state.currentHtml = record.html;
+    state.inspect.drafts = {};
     state.currentMeta = normalizeMeta(record.meta || record.design?.currentMeta || state.currentMeta);
     state.design.chat = record.chat || state.design.chat;
     state.assets.selectedIds = Array.isArray(record.design?.selectedAssetIds)
@@ -324,6 +325,7 @@ function buildEditableHtmlPayload(options = {}) {
 function applyEditableHtmlResult(result) {
   if (result.html) {
     state.currentHtml = result.html;
+    state.inspect.drafts = {};
   }
   state.currentMeta = normalizeMeta(result.meta || result.design?.currentMeta || state.currentMeta);
   state.promptBundle = result.promptBundle || state.promptBundle;
@@ -559,6 +561,7 @@ function clearCurrentDesignWorkspace() {
     state.design.chat = [];
     syncVersionsFromCommits([], null);
     state.currentHtml = "";
+    state.inspect.drafts = {};
     state.currentMeta = normalizeMeta(null);
     state.promptBundle = null;
     state.warnings = [];
@@ -604,6 +607,11 @@ function applyOpenedDesignRecord(record, options = {}) {
     syncVersionsFromCommits(record.commits || [], options.activeCommitHash);
 
     state.currentHtml = record.html || "";
+    // HTML 整段被替换（AI 改稿 / 切换版本 / 打开设计稿），上一轮用户手动编辑
+    // 残留在 state.inspect.drafts 里的键会遮盖从新 HTML 解析出的 entry.value，
+    // 导致左侧检查面板文字不刷新。这里强制清空，让 syncEditableTextDrafts
+    // 的 `?? entry.value` 走 fallback 到新值。
+    state.inspect.drafts = {};
     state.currentMeta = normalizeMeta(record.meta || design.currentMeta || state.currentMeta);
     state.promptBundle = record.promptBundle ?? design.promptBundle ?? null;
     state.provider = design.provider || state.provider;
@@ -876,6 +884,7 @@ function applyDesignResult(result, label, options = {}) {
   const { preserveStreamBlocks = false, assistantBlocks = [] } = options;
   const previousScopeKey = currentConversationScopeKey.value;
   state.currentHtml = result.html;
+  state.inspect.drafts = {};
   state.currentMeta = normalizeMeta(result.meta || result.design?.currentMeta || state.currentMeta);
   _hydrateFromMeta(state.currentMeta);
   state.provider = result.provider || state.provider;
