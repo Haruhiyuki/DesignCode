@@ -197,7 +197,9 @@ pub fn kill_child_descendants(pid: u32) {
 
     #[cfg(windows)]
     {
-        let _ = Command::new("taskkill")
+        let mut command = Command::new("taskkill");
+        crate::utils::configure_background_command(&mut command);
+        let _ = command
             .arg("/PID")
             .arg(pid.to_string())
             .arg("/T")
@@ -1087,7 +1089,9 @@ fn kill_all_direct_children() {
         "Get-CimInstance Win32_Process -Filter \"ParentProcessId={}\" | ForEach-Object {{ $_.ProcessId }}",
         current_pid
     );
-    let Ok(output) = Command::new("powershell.exe")
+    let mut ps = Command::new("powershell.exe");
+    crate::utils::configure_background_command(&mut ps);
+    let Ok(output) = ps
         .args(["-NoProfile", "-NonInteractive", "-Command", script.as_str()])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -1102,7 +1106,9 @@ fn kill_all_direct_children() {
         .lines()
         .filter_map(|line| line.trim().parse::<u32>().ok())
     {
-        let _ = Command::new("taskkill")
+        let mut tk = Command::new("taskkill");
+        crate::utils::configure_background_command(&mut tk);
+        let _ = tk
             .args(["/PID", &pid.to_string(), "/T", "/F"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())

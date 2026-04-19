@@ -1789,6 +1789,7 @@ fn workspace_shell_exec(directory: String, command: String) -> Result<Value, Str
     #[cfg(target_os = "windows")]
     let mut process = {
         let mut process = Command::new("cmd");
+        configure_background_command(&mut process);
         process.args(["/C", command.as_str()]);
         process
     };

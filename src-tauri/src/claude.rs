@@ -624,7 +624,9 @@ pub fn kill_claude_stream_client(client: &ClaudeStreamClient) {
 
     #[cfg(windows)]
     {
-        let _ = Command::new("taskkill")
+        let mut command = Command::new("taskkill");
+        crate::utils::configure_background_command(&mut command);
+        let _ = command
             .arg("/PID")
             .arg(client.pid.to_string())
             .arg("/T")

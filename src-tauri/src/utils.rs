@@ -408,7 +408,9 @@ pub fn listening_process_ids(port: u16) -> Result<Vec<u32>, String> {
 
 #[cfg(target_os = "windows")]
 pub fn listening_process_ids(port: u16) -> Result<Vec<u32>, String> {
-    let output = Command::new("netstat")
+    let mut command = Command::new("netstat");
+    configure_background_command(&mut command);
+    let output = command
         .args(["-ano", "-p", "tcp"])
         .output()
         .map_err(|error| format!("Failed to inspect listening processes on port {port}: {error}"))?;
@@ -463,7 +465,9 @@ pub fn process_command_line(pid: u32) -> Option<String> {
 #[cfg(target_os = "windows")]
 pub fn process_command_line(pid: u32) -> Option<String> {
     let script = format!("(Get-Process -Id {pid} -ErrorAction Stop).ProcessName");
-    Command::new("powershell.exe")
+    let mut command = Command::new("powershell.exe");
+    configure_background_command(&mut command);
+    command
         .args(["-NoProfile", "-NonInteractive", "-Command", script.as_str()])
         .output()
         .ok()
@@ -489,7 +493,9 @@ pub fn kill_pid(pid: u32, signal: &str) -> Result<(), String> {
 #[cfg(target_os = "windows")]
 pub fn kill_pid(pid: u32, _signal: &str) -> Result<(), String> {
     let script = format!("Stop-Process -Id {pid} -Force -ErrorAction Stop");
-    let output = Command::new("powershell.exe")
+    let mut command = Command::new("powershell.exe");
+    configure_background_command(&mut command);
+    let output = command
         .args(["-NoProfile", "-NonInteractive", "-Command", script.as_str()])
         .output()
         .map_err(|error| format!("Failed to terminate pid {pid}: {error}"))?;
@@ -873,6 +879,9 @@ pub fn run_node_bridge(app: &AppHandle, mode: &str, payload: Option<Value>) -> R
     let node_binary = resolve_node_binary(app);
 
     let mut command = Command::new(&node_binary);
+    // 缺了这个 Windows 下每次 Tauri→node 调用（菜单、设计列表、art-asset 等）
+    // 都会蹦一个黑色控制台窗口一闪
+    configure_background_command(&mut command);
     command
         .current_dir(&root)
         .arg(&script)
