@@ -2159,6 +2159,97 @@ textarea:disabled {
   overflow: hidden;
 }
 
+/* 轻量 Markdown 渲染容器 —— AI 回复里的 **粗体**、`code`、# 标题等会被
+   markdown-lite 展开成真实 HTML，这里给各元素一个不冲突的默认样式 */
+.markdown-body {
+  white-space: normal;
+}
+
+.markdown-body > :first-child {
+  margin-top: 0;
+}
+
+.markdown-body > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-body p {
+  margin: 0 0 0.5em 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.markdown-body p:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-body h1.md-h1,
+.markdown-body h2.md-h2,
+.markdown-body h3.md-h3,
+.markdown-body h4.md-h4 {
+  margin: 0.8em 0 0.4em;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.markdown-body h1.md-h1 { font-size: 1.15em; }
+.markdown-body h2.md-h2 { font-size: 1.08em; }
+.markdown-body h3.md-h3 { font-size: 1em; }
+.markdown-body h4.md-h4 { font-size: 0.95em; }
+
+.markdown-body strong { font-weight: 600; }
+.markdown-body em { font-style: italic; }
+
+.markdown-body code {
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: rgba(57, 43, 30, 0.08);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  word-break: break-word;
+}
+
+.markdown-body pre.md-pre {
+  margin: 0.5em 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: rgba(22, 18, 14, 0.06);
+  overflow-x: auto;
+}
+
+.markdown-body pre.md-pre code {
+  padding: 0;
+  background: transparent;
+  font-size: 0.85em;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.markdown-body ul.md-ul,
+.markdown-body ol.md-ol {
+  margin: 0.3em 0 0.6em;
+  padding-left: 1.4em;
+}
+
+.markdown-body ul.md-ul li,
+.markdown-body ol.md-ol li {
+  margin: 0.1em 0;
+}
+
+.markdown-body blockquote {
+  margin: 0.5em 0;
+  padding: 0 0.8em;
+  border-left: 3px solid rgba(57, 43, 30, 0.18);
+  color: rgba(57, 43, 30, 0.75);
+}
+
+.markdown-body a {
+  color: var(--accent, #8a5a2a);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .agent-block-text {
   padding: 14px 16px;
   border: 1px solid rgba(57, 43, 30, 0.08);

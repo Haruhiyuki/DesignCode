@@ -1,6 +1,7 @@
 <script setup>
 // 对话输入面板 — prompt 输入框、对话历史、agent stream block 渲染。
 import { t } from "../i18n/index.js";
+import { renderMarkdownLite } from "../lib/markdown-lite.js";
 import { useWorkspaceState } from "../composables/useWorkspaceState.js";
 import { useSetupConfig } from "../composables/useSetupConfig.js";
 import { useConversation } from "../composables/useConversation.js";
@@ -80,12 +81,11 @@ const { submitConversation, stopConversation, handleComposerKeydown } = useDesig
                   class="agent-block agent-block-thought"
                   :class="{ 'agent-block-thought-rich': block.variant === 'rich' }"
                 >
-                  <p
-                    class="conversation-block-copy"
+                  <div
+                    class="conversation-block-copy markdown-body"
                     :class="{ 'is-collapsed': conversationBlockExpandable(block) && !isConversationBlockExpanded(entry.id, block) }"
-                  >
-                    {{ block.content }}
-                  </p>
+                    v-html="renderMarkdownLite(block.content)"
+                  ></div>
                   <button
                     v-if="conversationBlockExpandable(block)"
                     type="button"
@@ -140,12 +140,11 @@ const { submitConversation, stopConversation, handleComposerKeydown } = useDesig
                     <span>{{ block.title || t("confirm.needConfirm") }}</span>
                     <strong>{{ block.status === 'resolved' ? 'resolved' : 'waiting' }}</strong>
                   </div>
-                  <p
-                    class="conversation-block-copy"
+                  <div
+                    class="conversation-block-copy markdown-body"
                     :class="{ 'is-collapsed': conversationBlockExpandable(block) && !isConversationBlockExpanded(entry.id, block) }"
-                  >
-                    {{ block.content }}
-                  </p>
+                    v-html="renderMarkdownLite(block.content)"
+                  ></div>
                   <div class="agent-block-confirm-actions">
                     <button
                       type="button"
@@ -180,12 +179,11 @@ const { submitConversation, stopConversation, handleComposerKeydown } = useDesig
                   class="agent-block agent-block-text"
                   :data-tone="block.tone || 'default'"
                 >
-                  <p
-                    class="conversation-block-copy"
+                  <div
+                    class="conversation-block-copy markdown-body"
                     :class="{ 'is-collapsed': conversationBlockExpandable(block) && !isConversationBlockExpanded(entry.id, block) }"
-                  >
-                    {{ block.content }}
-                  </p>
+                    v-html="renderMarkdownLite(block.content)"
+                  ></div>
                   <button
                     v-if="conversationBlockExpandable(block)"
                     type="button"
