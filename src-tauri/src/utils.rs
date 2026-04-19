@@ -523,8 +523,20 @@ pub fn kill_opencode_listeners(ports: &[u16]) -> Result<Vec<u32>, String> {
             continue;
         }
 
+        // opencode 进程树里还挂着 node 子进程（MCP servers、shell 工具等），
+        // 先递归清理子孙再杀主进程，避免 grandchildren 被 launchd 收养成残留
+        crate::gemini::kill_child_descendants(pid);
         let _ = kill_pid(pid, "-TERM");
         killed.push(pid);
+    }
+
+    if !killed.is_empty() {
+        // 给 SIGTERM 一点时间让 opencode flush；然后 SIGKILL 兜底，避免
+        // 某些子进程忽略 TERM 把端口继续占着
+        std::thread::sleep(Duration::from_millis(150));
+        for pid in &killed {
+            let _ = kill_pid(*pid, "-KILL");
+        }
     }
 
     Ok(killed)

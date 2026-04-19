@@ -1158,6 +1158,7 @@ async fn opencode_stop(
     let port_to_stop = with_opencode_state(state.inner(), run_id.as_str(), |opencode| {
         let port = opencode.port;
         if let Some(child) = opencode.child.as_mut() {
+            crate::gemini::kill_child_descendants(child.id());
             let _ = child.kill();
             let _ = child.wait();
         }
@@ -2095,6 +2096,8 @@ async fn runtime_cleanup_tab(
             .map_err(|_| "Failed to lock OpenCode state map.")?;
         if let Some(mut run) = map.remove(run_id.as_str()) {
             if let Some(child) = run.child.as_mut() {
+                // 先递归清掉 opencode 派生的 node 子孙，再杀主进程
+                crate::gemini::kill_child_descendants(child.id());
                 let _ = child.kill();
                 let _ = child.wait();
             }
@@ -2444,7 +2447,7 @@ fn main() {
             app.on_menu_event(|app, event| {
                 let _ = app.emit(MENU_ACTION_EVENT, json!({ "action": event.id.0 }));
             });
-            cleanup_stale_gemini_orphans(app.handle());
+            cleanup_stale_runtime_orphans(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -2515,6 +2518,19 @@ fn main() {
         .expect("error while building tauri application")
         .run(|app, event| {
             match event {
+                // macOS 默认关窗不退 app，只把窗口收进 Dock —— 这样不仅 UI 奇怪，
+                // 更致命的是我们的 shutdown_runtime_children 永远不会跑（app 还活着），
+                // 等用户用 Force Quit 退出时是 SIGKILL，子进程全漏成残留。
+                // 主窗口关就直接触发应用退出，走 ExitRequested → 正常清理流程。
+                tauri::RunEvent::WindowEvent {
+                    label,
+                    event: tauri::WindowEvent::CloseRequested { .. },
+                    ..
+                } if label != "opencode-auth" => {
+                    // opencode-auth 是 OAuth 弹出的小窗口，关它不影响主 app；
+                    // 其它窗口（主窗口）关闭 = 用户要退出，走 exit 触发 shutdown
+                    app.exit(0);
+                }
                 tauri::RunEvent::ExitRequested { api, .. } => {
                     let _ = api;
                     shutdown_runtime_children(app);

@@ -369,36 +369,31 @@ where
     Ok(f(entry))
 }
 
-/// 退出阶段使用：尽力遍历 OpenCode HashMap，对每个条目执行回收闭包。
-/// 即使 mutex 被 poison，也会拿到内层数据继续走清理。
+/// 退出阶段使用：遍历 OpenCode HashMap，对每个条目执行回收闭包。
+/// 会阻塞等待 mutex —— 退出时必须拿到锁完成清理，否则会漏杀子进程；
+/// mutex 被 poison 照样拿内层继续清理。
 pub fn drain_opencode_states<F>(state: &RuntimeState, mut f: F)
 where
     F: FnMut(&str, &mut OpencodeState),
 {
-    let map_result = state.opencode.try_lock();
-    match map_result {
-        Ok(mut map) => {
-            for (run_id, run) in map.iter_mut() {
-                f(run_id.as_str(), run);
-            }
-        }
-        Err(std::sync::TryLockError::Poisoned(p)) => {
-            let mut map = p.into_inner();
-            for (run_id, run) in map.iter_mut() {
-                f(run_id.as_str(), run);
-            }
-        }
-        Err(std::sync::TryLockError::WouldBlock) => {}
+    let mut map = match state.opencode.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    for (run_id, run) in map.iter_mut() {
+        f(run_id.as_str(), run);
     }
 }
 
 pub fn drain_codex_clients(state: &RuntimeState) -> Vec<Arc<CodexAppServerClient>> {
     let mut out = Vec::new();
-    if let Ok(mut map) = state.codex.try_lock() {
-        for (_, codex) in map.iter_mut() {
-            if let Some(client) = codex.client.take() {
-                out.push(client);
-            }
+    let mut map = match state.codex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    for (_, codex) in map.iter_mut() {
+        if let Some(client) = codex.client.take() {
+            out.push(client);
         }
     }
     out
@@ -431,11 +426,13 @@ pub fn release_opencode_port(state: &RuntimeState, port: u16) {
 
 pub fn drain_claude_clients(state: &RuntimeState) -> Vec<Arc<ClaudeStreamClient>> {
     let mut out = Vec::new();
-    if let Ok(mut map) = state.claude.try_lock() {
-        for (_, claude) in map.iter_mut() {
-            if let Some(client) = claude.client.take() {
-                out.push(client);
-            }
+    let mut map = match state.claude.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    for (_, claude) in map.iter_mut() {
+        if let Some(client) = claude.client.take() {
+            out.push(client);
         }
     }
     out
