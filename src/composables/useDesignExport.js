@@ -269,6 +269,36 @@ function prepareExportShadows(doc) {
   }
 }
 
+// WKWebView 在 SVG foreignObject 里渲染带 `filter` 的元素时，常常把其子内容
+// （尤其是 <img>）整个丢掉。凡是包含 <img> 的祖先元素都去掉 filter，
+// 牺牲阴影换取图片可见；纯装饰元素（无 img 子孙）保留原效果。
+function stripFiltersFromImageContainers(doc) {
+  const view = doc.defaultView;
+  if (!view) return;
+
+  const imgs = doc.querySelectorAll("body img");
+  const ancestorsToStrip = new Set();
+  for (const img of imgs) {
+    let el = img;
+    while (el && el !== doc.body && el !== doc.documentElement) {
+      ancestorsToStrip.add(el);
+      el = el.parentElement;
+    }
+  }
+
+  for (const el of ancestorsToStrip) {
+    const computed = view.getComputedStyle(el);
+    if (computed.filter && computed.filter !== "none") {
+      el.style.filter = "none";
+    }
+    // WebKit 下 backdrop-filter 同样会破坏合成，一并清掉
+    if (computed.backdropFilter && computed.backdropFilter !== "none") {
+      el.style.backdropFilter = "none";
+      el.style.webkitBackdropFilter = "none";
+    }
+  }
+}
+
 async function flattenInlineSvgs(doc, scale = 1) {
   const svgs = [...doc.querySelectorAll("body svg")];
   if (svgs.length === 0) return;
@@ -320,13 +350,39 @@ async function flattenInlineSvgs(doc, scale = 1) {
 
     const img = doc.createElement("img");
     img.src = canvas.toDataURL("image/png");
+    img.dataset.exportFlattenedSvg = "1";
     if (svg.hasAttribute("class")) img.setAttribute("class", svg.getAttribute("class"));
+    if (svg.hasAttribute("id")) img.setAttribute("id", svg.getAttribute("id"));
     for (const attr of svg.attributes) {
       if (attr.name.startsWith("data-")) img.setAttribute(attr.name, attr.value);
     }
+    // 复制 inline style —— 常见诸如 top/left/opacity 这类 SVG 上写的定位，
+    // 丢了会导致星点、装饰元素跑位到左上角。
+    if (svg.hasAttribute("style")) img.setAttribute("style", svg.getAttribute("style"));
+    // 固定显示尺寸到栅格化前的 rect，避免按 canvas 的 rasterScale 放大实际布局。
+    img.setAttribute("width", String(Math.round(rect.width)));
+    img.setAttribute("height", String(Math.round(rect.height)));
     img.style.display = "block";
+    img.style.width = `${Math.round(rect.width)}px`;
+    img.style.height = `${Math.round(rect.height)}px`;
     svg.parentNode.replaceChild(img, svg);
   }
+}
+
+function loadImageInMainContext(src) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.decoding = "async";
+    image.onload = () => {
+      if (typeof image.decode === "function") {
+        image.decode().then(() => resolve(image), () => resolve(image));
+      } else {
+        resolve(image);
+      }
+    };
+    image.onerror = () => reject(new Error("Failed to load image for rasterization."));
+    image.src = src;
+  });
 }
 
 async function renderPreviewBlob(scale = 1) {
@@ -335,10 +391,16 @@ async function renderPreviewBlob(scale = 1) {
     const width = renderedCanvas.value.width;
     const height = renderedCanvas.value.height;
     prepareExportShadows(context.doc);
+    stripFiltersFromImageContainers(context.doc);
     await flattenInlineSvgs(context.doc, scale);
+    // 不再尝试在 foreignObject 内渲染位图。统一把 body 下所有 <img> 记录下来、
+    // 隐藏 ——先让 html-to-image 生成不含位图的底图，再在外层 canvas 用 2D 直接
+    // 画回每张 img。WKWebView 的 foreignObject 对 <img>/background-image 的
+    // data URL 支持都不可靠，这是唯一能完全绕过去的办法。
+    const imageOverlays = await collectAndHideRasterImages(context.doc);
     await primeExportFrame(context.doc);
 
-    const blob = await renderNodeToBlob(context.doc.body, {
+    const baseBlob = await renderNodeToBlob(context.doc.body, {
       cacheBust: false,
       pixelRatio: scale,
       skipAutoScale: true,
@@ -347,14 +409,96 @@ async function renderPreviewBlob(scale = 1) {
       canvasWidth: Math.round(width * scale),
       canvasHeight: Math.round(height * scale)
     });
-
-    if (!blob) {
+    if (!baseBlob) {
       throw new Error("Export render failed.");
     }
 
-    return blob;
+    if (!imageOverlays.length) {
+      return baseBlob;
+    }
+
+    const composed = await composeImageOverlaysOnBlob(baseBlob, imageOverlays, scale, width, height);
+    return composed || baseBlob;
   } finally {
     context.dispose();
+  }
+}
+
+// 记录每张 <img> 在 iframe 中的位置/尺寸/src，并把它们藏起来但保留布局，
+// 让 html-to-image 生成一张不含位图的底图。
+async function collectAndHideRasterImages(doc) {
+  const entries = [];
+  const bodyRect = doc.body.getBoundingClientRect();
+
+  for (const img of [...doc.querySelectorAll("body img")]) {
+    const src = img.getAttribute("src") || "";
+    if (!src) continue;
+
+    const rect = img.getBoundingClientRect();
+    let widthPx = rect.width;
+    let heightPx = rect.height;
+    const natW = img.naturalWidth || 0;
+    const natH = img.naturalHeight || 0;
+
+    // 大图解码慢时 height:auto 可能 resolve 成 0，用原始宽高比反推避免漏画
+    if (!heightPx && widthPx && natW && natH) heightPx = (natH / natW) * widthPx;
+    if (!widthPx && heightPx && natW && natH) widthPx = (natW / natH) * heightPx;
+    if (!widthPx || !heightPx) continue;
+
+    entries.push({
+      src,
+      x: rect.left - bodyRect.left,
+      y: rect.top - bodyRect.top,
+      width: widthPx,
+      height: heightPx
+    });
+
+    // 保留布局空间，只是不渲染本体
+    img.style.visibility = "hidden";
+  }
+
+  return entries;
+}
+
+async function composeImageOverlaysOnBlob(baseBlob, overlays, scale, canvasWidthCss, canvasHeightCss) {
+  try {
+    const baseUrl = URL.createObjectURL(baseBlob);
+    let baseImage;
+    try {
+      baseImage = await loadImageInMainContext(baseUrl);
+    } finally {
+      URL.revokeObjectURL(baseUrl);
+    }
+
+    const finalCanvas = document.createElement("canvas");
+    finalCanvas.width = Math.round(canvasWidthCss * scale);
+    finalCanvas.height = Math.round(canvasHeightCss * scale);
+    const ctx = finalCanvas.getContext("2d", { alpha: true });
+    if (!ctx) return null;
+
+    ctx.drawImage(baseImage, 0, 0, finalCanvas.width, finalCanvas.height);
+
+    for (const overlay of overlays) {
+      try {
+        const image = await loadImageInMainContext(overlay.src);
+        ctx.drawImage(
+          image,
+          Math.round(overlay.x * scale),
+          Math.round(overlay.y * scale),
+          Math.round(overlay.width * scale),
+          Math.round(overlay.height * scale)
+        );
+      } catch (error) {
+        console.warn("[export-composite] overlay draw failed", { error: String(error), srcLen: overlay.src.length });
+      }
+    }
+
+    return await new Promise((resolve) => {
+      finalCanvas.toBlob((blob) => resolve(blob), "image/png");
+    });
+  } catch (error) {
+    console.warn("[export-composite] compose failed", { error: String(error) });
+    return null;
   }
 }
 
