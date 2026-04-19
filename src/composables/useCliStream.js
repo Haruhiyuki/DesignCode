@@ -257,6 +257,14 @@ let _lastClaudeAssistantText = "";
 function formatClaudeJsonEvent(event) {
   const eventType = event.type || "";
 
+  // Claude CLI 的 stream-json 会为每个文本/JSON delta 发一条 `stream_event`，
+  // Write 工具写一份 20KB HTML 就能轰出几千条。它们是增量的子级事件，
+  // 最终内容会被包在后续的 `assistant` / `user` 事件里，我们从来不需要独立渲染。
+  // 留着只会让 state.agent.output 字符串以 O(n²) 速度膨胀，主线程直接冻死。
+  if (eventType === "stream_event") {
+    return null;
+  }
+
   if (eventType === "system" && event.subtype === "init") {
     _lastClaudeAssistantText = "";
     return "[claude] Session started";
