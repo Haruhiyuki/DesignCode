@@ -5,7 +5,7 @@
 //   2. 生成 latest.json（包含 windows-x86_64 平台条目）
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
@@ -127,11 +127,8 @@ const latestJson = {
   }
 };
 
-const outputDir = path.join(nsisDir, "..", "dist");
-if (!existsSync(outputDir)) {
-  mkdirSync(outputDir, { recursive: true });
-}
-const latestPath = path.join(outputDir, "latest.json");
+// 直接写到 nsis/ —— 和 installer、.sig 同目录，方便 CI 一次性收集
+const latestPath = path.join(nsisDir, "latest.json");
 writeFileSync(latestPath, JSON.stringify(latestJson, null, 2) + "\n");
 console.log(`latest.json: ${latestPath}`);
 
