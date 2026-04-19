@@ -136,7 +136,10 @@ run("hdiutil", [
   "-volname", productName,
   "-srcfolder", dmgStaging,
   "-ov",
+  // UDZO 默认 zlib level 很低，对源码/脚本内容压缩率差得离谱；bump 到 9
+  // 通常能再省 30-40%，代价只是打包慢几秒。
   "-format", "UDZO",
+  "-imagekey", "zlib-level=9",
   dmgPath
 ]);
 

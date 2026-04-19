@@ -687,6 +687,82 @@ function findNativeBinaries(dir) {
   return results;
 }
 
+// 捡掉运行时用不到的纯开发产物：TS 定义、sourcemap、非 license 的 markdown 文档、
+// 测试/示例目录。打 DMG / NSIS 前统一清，macOS 尤其明显 —— gemini-cli 原装
+// node_modules 带了 ~140MB 这类垃圾。license/notice/copying 之类的法律必需品保留。
+async function pruneRuntimeJunk(baseDir) {
+  if (!existsSync(baseDir)) {
+    return { files: 0, dirs: 0, bytes: 0 };
+  }
+
+  // 只删「绝对不会是运行时代码」的目录名 —— docs/doc/examples 这些在某些包里
+  // 其实是 dist 下的子模块（比如 yaml pkg 就 require dist/doc/directives.js），
+  // 不能一刀切
+  const junkDirs = new Set([
+    "test", "tests", "__tests__", "__mocks__", "spec", ".github"
+  ]);
+
+  const stats = { files: 0, dirs: 0, bytes: 0 };
+
+  function dirSize(dir) {
+    let total = 0;
+    try {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) total += dirSize(full);
+        else {
+          try { total += statSync(full).size; } catch {}
+        }
+      }
+    } catch {}
+    return total;
+  }
+
+  async function walk(currentDir) {
+    let entries;
+    try {
+      entries = readdirSync(currentDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      const full = path.join(currentDir, entry.name);
+
+      if (entry.isDirectory()) {
+        if (junkDirs.has(entry.name.toLowerCase())) {
+          stats.bytes += dirSize(full);
+          stats.dirs += 1;
+          await rm(full, { recursive: true, force: true });
+          continue;
+        }
+        await walk(full);
+        continue;
+      }
+
+      if (!entry.isFile()) continue;
+
+      const name = entry.name;
+      const lower = name.toLowerCase();
+      const isSourcemap = lower.endsWith(".map");
+      const isTypeDef = lower.endsWith(".d.ts") || lower.endsWith(".d.cts") || lower.endsWith(".d.mts");
+      const isDoc = lower.endsWith(".md")
+        && !/^(license|notice|copying|authors|changelog)/i.test(name);
+
+      if (!(isSourcemap || isTypeDef || isDoc)) continue;
+
+      try {
+        stats.bytes += statSync(full).size;
+        stats.files += 1;
+        await rm(full, { force: true });
+      } catch {}
+    }
+  }
+
+  await walk(baseDir);
+  return stats;
+}
+
 function signMacOSRuntimeBinaries(baseDir, identity) {
   if (platform !== "darwin" || !identity) {
     return 0;
@@ -839,6 +915,12 @@ async function main() {
         ? geminiDestination
         : `${geminiPackageDestination} (bundled node package)`
     }`
+  );
+
+  const pruned = await pruneRuntimeJunk(runtimeDir);
+  console.log(
+    `Pruned runtime junk: ${pruned.files} files + ${pruned.dirs} dirs, `
+    + `${(pruned.bytes / 1024 / 1024).toFixed(1)} MB`
   );
 
   // macOS: 仅在 --sign 标志下对原生二进制做 codesign（公证要求）
