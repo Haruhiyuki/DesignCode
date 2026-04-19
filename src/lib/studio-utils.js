@@ -246,8 +246,120 @@ export function patchEditableTextInHtml(html, entry, value) {
     return html;
   }
 
-  target.textContent = String(value ?? "");
+  applyEditableTextValue(target, value);
   return serializeHtmlDocument(doc, html);
+}
+
+// 把新文本写回目标元素时，尽量保留它内部的结构性子元素（如 <br>、<span>）。
+// 先把每个文本节点拆成 [leading, core, trailing]，仅在 core 组成的“可见串”
+// 里做前缀/后缀 diff，再把新文字塞进对应节点的 core——这样 HTML 源码里的
+// 格式化空白不会影响 diff，span 内的文字也不会被吞掉。
+export function applyEditableTextValue(target, value) {
+  const next = String(value ?? "");
+  if (!target) {
+    return;
+  }
+
+  const textNodes = collectTextNodes(target);
+  if (!textNodes.length || !target.children.length) {
+    target.textContent = next;
+    return;
+  }
+
+  const segments = textNodes.map((node) => {
+    const raw = node.nodeValue || "";
+    const leading = (raw.match(/^\s*/) || [""])[0];
+    const remaining = raw.slice(leading.length);
+    const trailing = (remaining.match(/\s*$/) || [""])[0];
+    const core = trailing.length ? remaining.slice(0, remaining.length - trailing.length) : remaining;
+    return { node, leading, core, trailing };
+  });
+
+  const original = segments.map((segment) => segment.core).join("");
+  if (original === next) {
+    return;
+  }
+
+  const origLen = original.length;
+  const nextLen = next.length;
+
+  let prefixLen = 0;
+  const maxPrefix = Math.min(origLen, nextLen);
+  while (prefixLen < maxPrefix && original.charAt(prefixLen) === next.charAt(prefixLen)) {
+    prefixLen += 1;
+  }
+
+  let suffixLen = 0;
+  const maxSuffix = Math.min(origLen - prefixLen, nextLen - prefixLen);
+  while (
+    suffixLen < maxSuffix
+    && original.charAt(origLen - 1 - suffixLen) === next.charAt(nextLen - 1 - suffixLen)
+  ) {
+    suffixLen += 1;
+  }
+
+  const changeStart = prefixLen;
+  const changeEnd = origLen - suffixLen;
+  const insertion = next.slice(prefixLen, nextLen - suffixLen);
+
+  let offset = 0;
+  let placed = false;
+  for (const segment of segments) {
+    const len = segment.core.length;
+    const segStart = offset;
+    const segEnd = offset + len;
+    offset = segEnd;
+
+    if (segEnd < changeStart || segStart > changeEnd) {
+      continue;
+    }
+
+    const localStart = Math.max(0, changeStart - segStart);
+    const localEnd = Math.min(len, changeEnd - segStart);
+    const before = segment.core.slice(0, localStart);
+    const after = segment.core.slice(localEnd);
+
+    if (!placed) {
+      segment.core = before + insertion + after;
+      placed = true;
+    } else {
+      segment.core = before + after;
+    }
+  }
+
+  if (!placed && insertion) {
+    let fallback = null;
+    for (let i = segments.length - 1; i >= 0; i -= 1) {
+      if (segments[i].core) {
+        fallback = segments[i];
+        break;
+      }
+    }
+    if (!fallback) {
+      fallback = segments[segments.length - 1];
+    }
+    fallback.core += insertion;
+  }
+
+  for (const segment of segments) {
+    segment.node.nodeValue = segment.leading + segment.core + segment.trailing;
+  }
+}
+
+function collectTextNodes(root) {
+  const doc = root.ownerDocument;
+  if (!doc) {
+    return [];
+  }
+
+  const nodes = [];
+  const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  let node = walker.nextNode();
+  while (node) {
+    nodes.push(node);
+    node = walker.nextNode();
+  }
+  return nodes;
 }
 
 function normalizeAssetPath(value) {

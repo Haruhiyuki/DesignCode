@@ -1,6 +1,7 @@
 // 画布视口 — 缩放/平移、抽屉布局、全屏编辑器、快捷键、iframe 交互。
 import { nextTick, ref } from "vue";
 import {
+  applyEditableTextValue,
   clamp,
   cloneSnapshot,
   normalizeMeta,
@@ -124,7 +125,7 @@ function updateFullscreenIframeText(entry, value) {
     return;
   }
 
-  target.textContent = value;
+  applyEditableTextValue(target, value);
   scheduleFullscreenEditableHotspotsRefresh();
 }
 
