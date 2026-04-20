@@ -13,12 +13,28 @@ import { useSetupConfig } from "./useSetupConfig.js";
 import { useArtAssets } from "./useArtAssets.js";
 import { useCanvasViewport } from "./useCanvasViewport.js";
 
+// 推一个 6s 自动消失的导出完成提示；覆盖上一次（如果还在显示中）。
+// 具体的"打开文件夹"按钮绑定在 ExportToast 组件里。
+let exportToastTimer = null;
+function showExportToast(fileName, format) {
+  ui.exportToast.visible = true;
+  ui.exportToast.fileName = fileName;
+  ui.exportToast.format = format;
+  if (exportToastTimer) {
+    window.clearTimeout(exportToastTimer);
+  }
+  exportToastTimer = window.setTimeout(() => {
+    ui.exportToast.visible = false;
+    exportToastTimer = null;
+  }, 6000);
+}
+
 // ---------------------------------------------------------------------------
 // 模块级单例 — 从其他 composable 获取依赖
 // ---------------------------------------------------------------------------
 
 const {
-  state,
+  state, ui,
   setStatus,
 } = useWorkspaceState();
 
@@ -515,8 +531,10 @@ async function exportHtmlAsync() {
       return;
     }
 
-    downloadBlob("designcode-export.html", new Blob([html], { type: "text/html" }));
+    const fileName = "designcode-export.html";
+    downloadBlob(fileName, new Blob([html], { type: "text/html" }));
     setStatus(t("status.htmlExported"), "success", "export");
+    showExportToast(fileName, "HTML");
   } catch (error) {
     state.warnings = [t("export.htmlExportFailed", { error: error instanceof Error ? error.message : String(error) })];
     setStatus(t("status.htmlExportFailed"), "error", "export");
@@ -532,8 +550,10 @@ async function exportSvg() {
   try {
     context = await createExportFrameContext();
     const svg = buildSvgSnapshot(context.doc, renderedCanvas.value.width, renderedCanvas.value.height);
-    downloadBlob("designcode-export.svg", new Blob([svg], { type: "image/svg+xml" }));
+    const fileName = "designcode-export.svg";
+    downloadBlob(fileName, new Blob([svg], { type: "image/svg+xml" }));
     setStatus(t("status.svgExported"), "success", "export");
+    showExportToast(fileName, "SVG");
   } catch (error) {
     state.warnings = [error instanceof Error ? error.message : String(error)];
     setStatus(t("status.svgExportFailed"), "error", "export");
@@ -545,8 +565,10 @@ async function exportSvg() {
 async function exportPng() {
   try {
     const blob = await renderPreviewBlob(currentExportQuality.value.scale);
-    downloadBlob("designcode-export.png", blob);
+    const fileName = "designcode-export.png";
+    downloadBlob(fileName, blob);
     setStatus(t("status.pngExported", { quality: currentExportQuality.value.label }), "success");
+    showExportToast(fileName, "PNG");
   } catch (error) {
     state.warnings = [t("export.pngExportFailed", { error: error instanceof Error ? error.message : String(error) })];
     setStatus(t("status.pngExportFailed"), "error", "export");
@@ -574,8 +596,10 @@ async function exportPdf() {
     });
 
     const bytes = await pdf.save();
-    downloadBlob("designcode-export.pdf", new Blob([bytes], { type: "application/pdf" }));
+    const fileName = "designcode-export.pdf";
+    downloadBlob(fileName, new Blob([bytes], { type: "application/pdf" }));
     setStatus(t("status.pdfExported", { quality: currentExportQuality.value.label }), "success");
+    showExportToast(fileName, "PDF");
   } catch (error) {
     state.warnings = [t("export.pdfExportFailed", { error: error instanceof Error ? error.message : String(error) })];
     setStatus(t("status.pdfExportFailed"), "error", "export");
@@ -618,10 +642,12 @@ async function exportPsd() {
         t("status.psdCompositeOnlyWarning")
       ];
       setStatus(t("status.psdExportedComposite", { route: routeLabel }), "success");
+      showExportToast(result.filename, "PSD");
       return;
     }
 
     setStatus(t("status.psdExported", { detail: `${result.stats.layerCount} layers · ${routeLabel}` }), "success", "export");
+    showExportToast(result.filename, "PSD");
   } catch (error) {
     state.warnings = [t("export.psdExportFailed", { error: error instanceof Error ? error.message : String(error) })];
     setStatus(t("status.psdExportFailed"), "error", "export");
@@ -637,27 +663,28 @@ async function exportPsd() {
 function runExportAction(type) {
   closeExportMenu();
 
-  if (type === "png") {
-    void exportPng();
+  // 已经在导出中时忽略，避免重复点击把同一份内容并发导出导致 iframe 竞争。
+  if (state.design.exportBusy) {
     return;
   }
 
-  if (type === "svg") {
-    void exportSvg();
-    return;
-  }
+  const runner = () => {
+    if (type === "png") return exportPng();
+    if (type === "svg") return exportSvg();
+    if (type === "print") return exportPdf();
+    if (type === "psd") return exportPsd();
+    return exportHtmlAsync();
+  };
 
-  if (type === "print") {
-    void exportPdf();
-    return;
-  }
-
-  if (type === "psd") {
-    void exportPsd();
-    return;
-  }
-
-  exportHtml();
+  state.design.exportBusy = true;
+  Promise.resolve()
+    .then(runner)
+    // 各 export 函数内部已经 try/catch 并写到 setStatus / state.warnings；
+    // 这里再 catch 一次仅为兜底，防止未覆盖路径把 Promise 抛成 unhandled。
+    .catch(() => {})
+    .finally(() => {
+      state.design.exportBusy = false;
+    });
 }
 
 // ---------------------------------------------------------------------------

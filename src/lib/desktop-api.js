@@ -706,6 +706,13 @@ export async function rebuildNativeMenu(locale) {
   return invoke("rebuild_menu", { locale });
 }
 
+export async function revealDownloadFolder(fileName = null) {
+  if (!isTauriRuntime()) {
+    return;
+  }
+  return invoke("reveal_download_folder", { fileName: fileName || null });
+}
+
 export async function getSystemLocale() {
   return invoke("get_system_locale");
 }

@@ -249,6 +249,7 @@
   "topbar.saved": "Saved",
   "topbar.working": "Working",
   "topbar.download": "Download",
+  "topbar.exporting": "Exporting",
   "topbar.exportQualityCaption": "PNG / PDF / PSD Quality",
   "topbar.exportPng": "Export PNG",
   "topbar.exportSvg": "Export SVG",
@@ -558,6 +559,9 @@
   "export.agentRunFailed": "Agent execution failed: {error}",
   "export.shellRunFailed": "Shell execution failed: {error}",
   "export.sessionCreated": "Session created: {detail}",
+  "export.toast.title": "{format} exported",
+  "export.toast.openFolder": "Open folder",
+  "export.toast.dismiss": "Dismiss",
 
   "runtime.refresh.agentsFailed": "Failed to read OpenCode agents: {error}",
   "runtime.refresh.providerFailed": "Failed to read provider configuration: {error}",

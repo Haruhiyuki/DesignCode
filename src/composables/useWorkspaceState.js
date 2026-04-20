@@ -147,7 +147,10 @@ export function createWorkspaceStore() {
       createError: "",
       saveState: "idle",
       saveError: "",
-      lastSavedAt: ""
+      lastSavedAt: "",
+      // 导出期间只影响下载按钮的 UI（灰+转圈）；不走 state.isBusy / setBusy，
+      // 避免阻塞整体状态（右侧 console status 陷入 busy、左侧抽屉禁用等）。
+      exportBusy: false
     },
     assets: {
       items: [],
@@ -205,7 +208,14 @@ export function createWorkspaceStore() {
     canvasDragging: false,
     canvasFullscreen: false,
     headerTitleEditing: false,
-    localeMenuOpen: false
+    localeMenuOpen: false,
+    // 导出完成后右下角弹出的小提醒；点"打开文件夹"跳转系统文件管理器。
+    // visible=false 时其它字段可无；format 用于决定提示文案里的格式名。
+    exportToast: {
+      visible: false,
+      fileName: "",
+      format: ""
+    }
   });
 
   const interaction = reactive({

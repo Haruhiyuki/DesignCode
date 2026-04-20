@@ -620,6 +620,13 @@ textarea:disabled {
   flex: 0 0 auto;
 }
 
+.topbar-export-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
 .topbar-export-menu {
   position: absolute;
   top: calc(100% + 8px);
@@ -4736,4 +4743,107 @@ textarea:disabled {
     min-height: 260px;
     padding: 22px;
   }
+}
+
+/* 导出完成提示：贴在 Download 按钮正下方（与 .topbar-export-menu 同源）。
+   父层 .topbar-export 是 position: relative，这里 absolute 即可自动跟随按钮位置。 */
+.export-toast {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 248px;
+  max-width: min(360px, calc(100vw - 32px));
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(49, 39, 26, 0.12);
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 14px 32px rgba(15, 20, 30, 0.16);
+  color: var(--ink-strong);
+}
+
+.export-toast-icon {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: rgba(48, 158, 100, 0.14);
+  color: rgba(48, 158, 100, 0.96);
+  font-weight: 700;
+  font-size: 0.86rem;
+}
+
+.export-toast-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.export-toast-copy strong {
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.export-toast-filename {
+  font-size: 0.72rem;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.export-toast-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.export-toast-action {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(49, 39, 26, 0.14);
+  background: rgba(255, 255, 255, 0.6);
+  color: var(--ink-strong);
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.export-toast-action:hover {
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: var(--shadow-soft);
+}
+
+.export-toast-close {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: none;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 1.05rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.export-toast-close:hover {
+  background: rgba(49, 39, 26, 0.06);
+  color: var(--ink-strong);
+}
+
+.export-toast-enter-active,
+.export-toast-leave-active {
+  transition: transform 0.22s ease, opacity 0.22s ease;
+}
+
+.export-toast-enter-from,
+.export-toast-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
 }

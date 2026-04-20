@@ -2432,6 +2432,71 @@ fn get_system_locale() -> String {
     "en".to_string()
 }
 
+// 打开系统下载目录（可选在 Windows/macOS 上高亮某个文件）。
+// 前端导出使用 <a download> 触发 webview 下载，文件落在用户默认下载目录
+// （~/Downloads 或 %USERPROFILE%\Downloads），这里只负责把该目录在系统文件
+// 管理器里打开；如果给了 file_name，Finder/Explorer 会定位到该文件。
+#[tauri::command]
+fn reveal_download_folder(file_name: Option<String>) -> Result<(), String> {
+    let home = user_home_dir().ok_or_else(|| "Unable to resolve user home directory.".to_string())?;
+    let downloads = home.join("Downloads");
+    let target_file = file_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|name| downloads.join(name))
+        .filter(|path| path.exists());
+
+    #[cfg(target_os = "macos")]
+    {
+        let mut command = Command::new("open");
+        if let Some(path) = target_file {
+            command.arg("-R").arg(path);
+        } else {
+            command.arg(&downloads);
+        }
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| format!("Failed to open Downloads folder: {error}"))?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let mut command = Command::new("explorer.exe");
+        configure_background_command(&mut command);
+        if let Some(path) = target_file {
+            command.arg(format!("/select,{}", path.display()));
+        } else {
+            command.arg(&downloads);
+        }
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            // explorer.exe 对非零退出码很敏感；忽略状态，只要 spawn 成功就算成功
+            .spawn()
+            .map_err(|error| format!("Failed to open Downloads folder: {error}"))?;
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        // Linux 的 xdg-open 无法直接高亮文件，退化为打开目录。
+        let _ = target_file;
+        Command::new("xdg-open")
+            .arg(&downloads)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| format!("Failed to open Downloads folder: {error}"))?;
+    }
+
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // 应用入口
 // ---------------------------------------------------------------------------
@@ -2513,7 +2578,8 @@ fn main() {
             runtime_abort,
             check_for_updates,
             rebuild_menu,
-            get_system_locale
+            get_system_locale,
+            reveal_download_folder
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

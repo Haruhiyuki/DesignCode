@@ -249,6 +249,7 @@
   "topbar.saved": "保存済み",
   "topbar.working": "処理中",
   "topbar.download": "ダウンロード",
+  "topbar.exporting": "エクスポート中",
   "topbar.exportQualityCaption": "PNG / PDF / PSD 画質",
   "topbar.exportPng": "PNG エクスポート",
   "topbar.exportSvg": "SVG エクスポート",
@@ -558,6 +559,9 @@
   "export.agentRunFailed": "エージェントの実行に失敗しました：{error}",
   "export.shellRunFailed": "シェルの実行に失敗しました：{error}",
   "export.sessionCreated": "セッションを作成しました：{detail}",
+  "export.toast.title": "{format} をエクスポートしました",
+  "export.toast.openFolder": "フォルダを開く",
+  "export.toast.dismiss": "閉じる",
 
   "runtime.refresh.agentsFailed": "OpenCode エージェントの読み取りに失敗しました：{error}",
   "runtime.refresh.providerFailed": "プロバイダー設定の読み取りに失敗しました：{error}",

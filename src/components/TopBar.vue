@@ -8,6 +8,7 @@ import { useDesignSession } from "../composables/useDesignSession.js";
 import { useCanvasViewport } from "../composables/useCanvasViewport.js";
 import { useDesignExport } from "../composables/useDesignExport.js";
 import { useTabs } from "../composables/useTabs.js";
+import ExportToast from "./overlays/ExportToast.vue";
 
 const { state, ui, exportMenuRef, headerTitleInputRef } = useWorkspaceState();
 const { tabs, activeTabId, createTab, closeTab, switchTo } = useTabs();
@@ -174,11 +175,13 @@ function bindRenameInput(el, tabId) {
       <div ref="exportMenuRef" class="topbar-export">
         <button
           type="button"
-          class="button button-ghost topbar-action"
-          :disabled="!canExport"
+          class="button button-ghost topbar-action topbar-export-trigger"
+          :class="{ 'is-exporting': state.design.exportBusy }"
+          :disabled="!canExport || state.design.exportBusy"
           @click.stop="toggleExportMenu"
         >
-          {{ t("topbar.download") }}
+          <span v-if="state.design.exportBusy" class="topbar-save-spinner" aria-hidden="true"></span>
+          {{ state.design.exportBusy ? t("topbar.exporting") : t("topbar.download") }}
         </button>
 
         <div v-if="ui.exportMenuOpen" class="topbar-export-menu" @click.stop>
@@ -204,6 +207,8 @@ function bindRenameInput(el, tabId) {
           <button type="button" class="topbar-export-item" @click="runExportAction('print')">{{ t("topbar.exportPdf") }}</button>
           <button v-if="canExportPsd" type="button" class="topbar-export-item" @click="runExportAction('psd')">{{ t("topbar.exportPsd") }}</button>
         </div>
+
+        <ExportToast />
       </div>
     </div>
   </header>

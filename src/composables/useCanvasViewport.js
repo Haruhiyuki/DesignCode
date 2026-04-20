@@ -421,6 +421,11 @@ function toggleExportMenu() {
   }
 
   ui.exportMenuOpen = !ui.exportMenuOpen;
+  // 打开菜单时把导出完成提示先让位：两者都挂在按钮下方会重叠，用户重新点
+  // Download 多半是想再导出一次，旧提示已经没意义了。
+  if (ui.exportMenuOpen && ui.exportToast?.visible) {
+    ui.exportToast.visible = false;
+  }
 }
 
 function closeExportMenu() {

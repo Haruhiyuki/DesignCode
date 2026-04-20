@@ -249,6 +249,7 @@
   "topbar.saved": "已保存",
   "topbar.working": "处理中",
   "topbar.download": "下载",
+  "topbar.exporting": "导出中",
   "topbar.exportQualityCaption": "PNG / PDF / PSD 画质",
   "topbar.exportPng": "导出 PNG",
   "topbar.exportSvg": "导出 SVG",
@@ -558,6 +559,9 @@
   "export.agentRunFailed": "运行 Agent 失败：{error}",
   "export.shellRunFailed": "执行 Shell 失败：{error}",
   "export.sessionCreated": "Session 已创建：{detail}",
+  "export.toast.title": "{format} 已导出",
+  "export.toast.openFolder": "打开文件夹",
+  "export.toast.dismiss": "关闭提示",
 
   "runtime.refresh.agentsFailed": "读取 OpenCode agents 失败：{error}",
   "runtime.refresh.providerFailed": "读取 Provider 配置失败：{error}",
