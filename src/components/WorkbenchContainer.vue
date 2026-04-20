@@ -470,10 +470,17 @@ onMounted(() => {
 
   // bootstrap 只在 app 启动时跑一次；WorkbenchContainer 现在整个生命期内
   // 只 mount 一次，切 tab 不会重新触发这个钩子。
+  //
+  // bootstrap 内部已经把各分支错误折叠进 state.warnings + 会话控制台日志；
+  // 只有真正意外的顶层异常（例如 composable 内部语法错误）才会到这里。此时也
+  // 不要只扔一个红色 "失败" 标签 —— 右上角那个 chip 完全没法让用户看见 stack，
+  // 一并把详情灌进会话控制台日志，方便截图反馈。
   bootstrap()
     .catch((error) => {
-      state.warnings = [error instanceof Error ? error.message : String(error)];
-      setStatus(t("status.initFailed"), "error", "load");
+      const detail = error instanceof Error ? (error.stack || error.message) : String(error);
+      state.warnings = [detail];
+      appendAgentOutputEntry(`⚠ bootstrap: ${detail}`);
+      setStatus(t("status.workbenchReady"), "idle", "load");
     })
     .finally(() => {
       handlePendingAction(currentTabId.value);

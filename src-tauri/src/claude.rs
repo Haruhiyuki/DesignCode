@@ -20,12 +20,19 @@ use tauri::AppHandle;
 // ---------------------------------------------------------------------------
 
 pub fn claude_login_status(binary: &Path, cwd: &Path) -> Result<(bool, String, Option<String>), String> {
+    // Windows 上 claude auth status 若遇代理/网络异常会阻塞数十秒，原先用
+    // .output() 没超时，整条 refreshDesktopIntegration 会卡死。改为带 5s 超时。
     let mut command = Command::new(binary);
     configure_background_command(&mut command);
-    let output = command
+    let child = command
         .args(["auth", "status"])
         .current_dir(cwd)
-        .output()
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("Failed to inspect Claude Code auth status: {error}"))?;
+    let output = wait_child_output_with_timeout(child, CLI_VERIFY_TIMEOUT)
         .map_err(|error| format!("Failed to inspect Claude Code auth status: {error}"))?;
 
     let stdout = strip_cli_warning_lines(&trim_output(&output.stdout));

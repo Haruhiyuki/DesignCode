@@ -3,13 +3,13 @@
 
 use crate::types::*;
 use serde_json::Value;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::ffi::OsStr;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
-use std::sync::mpsc;
+use std::sync::{LazyLock, Mutex, mpsc};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -44,6 +44,31 @@ pub fn trim_output(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).trim().to_string()
 }
 
+// Windows 上 spawn 任何 .exe 都会付出 ~300ms–1.5s 的 Defender 扫描 + 进程初始化开销。
+// refreshDesktopIntegration 一次调用会叠加 5 次 --version（node / opencode / claude /
+// codex / gemini），bootstrap 完成前还会被 warmup 再补一轮。bundled 二进制在 app 生
+// 命周期内是不变的，把成功的版本号缓存起来可以彻底消除这些冗余 spawn。
+// TTL 5 分钟是为了给用户通过命令行自升级外部 CLI 一条兜底路径。
+const VERSION_CACHE_TTL: Duration = Duration::from_secs(300);
+static VERSION_CACHE: LazyLock<Mutex<HashMap<String, (Instant, Option<String>)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn version_cache_get(key: &str) -> Option<Option<String>> {
+    let guard = VERSION_CACHE.lock().ok()?;
+    let (at, value) = guard.get(key)?.clone();
+    if at.elapsed() > VERSION_CACHE_TTL {
+        return None;
+    }
+    Some(value)
+}
+
+fn version_cache_put(key: String, value: Option<String>) {
+    if let Ok(mut guard) = VERSION_CACHE.lock() {
+        guard.insert(key, (Instant::now(), value));
+    }
+}
+
+
 pub fn configure_background_command(command: &mut Command) {
     #[cfg(not(target_os = "windows"))]
     let _ = command;
@@ -56,9 +81,15 @@ pub fn configure_background_command(command: &mut Command) {
 }
 
 pub fn command_version<S: AsRef<OsStr>>(binary: S, flag: &str, cwd: &Path) -> Option<String> {
-    let mut command = Command::new(binary);
+    let binary_ref = binary.as_ref();
+    let cache_key = format!("v1|{}|{}", binary_ref.to_string_lossy(), flag);
+    if let Some(cached) = version_cache_get(&cache_key) {
+        return cached;
+    }
+
+    let mut command = Command::new(binary_ref);
     configure_background_command(&mut command);
-    command
+    let result = command
         .arg(flag)
         .current_dir(cwd)
         .stdout(Stdio::piped())
@@ -68,7 +99,10 @@ pub fn command_version<S: AsRef<OsStr>>(binary: S, flag: &str, cwd: &Path) -> Op
         .and_then(|child| wait_child_output_with_timeout(child, CLI_VERSION_TIMEOUT).ok())
         .filter(|output| output.status.success())
         .map(|output| trim_output(&output.stdout))
-        .filter(|value| !value.is_empty())
+        .filter(|value| !value.is_empty());
+
+    version_cache_put(cache_key, result.clone());
+    result
 }
 
 pub fn command_version_with_args(
@@ -77,11 +111,21 @@ pub fn command_version_with_args(
     flag: &str,
     cwd: &Path,
 ) -> Option<String> {
+    let cache_key = format!(
+        "va1|{}|{}|{}",
+        binary.to_string_lossy(),
+        leading_args.join(" "),
+        flag
+    );
+    if let Some(cached) = version_cache_get(&cache_key) {
+        return cached;
+    }
+
     let mut command = Command::new(binary);
     configure_background_command(&mut command);
     command.args(leading_args).arg(flag).current_dir(cwd);
 
-    command
+    let result = command
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
@@ -89,7 +133,10 @@ pub fn command_version_with_args(
         .and_then(|child| wait_child_output_with_timeout(child, CLI_VERSION_TIMEOUT).ok())
         .filter(|output| output.status.success())
         .map(|output| trim_output(&output.stdout))
-        .filter(|value| !value.is_empty())
+        .filter(|value| !value.is_empty());
+
+    version_cache_put(cache_key, result.clone());
+    result
 }
 
 pub fn user_home_dir() -> Option<PathBuf> {
@@ -111,6 +158,13 @@ pub fn codex_models_cache_file() -> Option<PathBuf> {
 }
 
 pub fn opencode_command_version(binary: &Path, cwd: &Path) -> Result<String, String> {
+    // 与 command_version 共享同一套缓存，命中则跳过整个 spawn/XDG 准备流程。
+    // 只缓存成功结果；失败路径保留原有的 stderr/stdout 诊断细节。
+    let cache_key = format!("oc1|{}", binary.to_string_lossy());
+    if let Some(Some(cached)) = version_cache_get(&cache_key) {
+        return Ok(cached);
+    }
+
     let mut command = Command::new(binary);
     configure_background_command(&mut command);
     apply_opencode_runtime_env(&mut command)?;
@@ -125,6 +179,7 @@ pub fn opencode_command_version(binary: &Path, cwd: &Path) -> Result<String, Str
     if output.status.success() {
         let version = trim_output(&output.stdout);
         if !version.is_empty() {
+            version_cache_put(cache_key, Some(version.clone()));
             return Ok(version);
         }
     }
@@ -464,16 +519,35 @@ pub fn process_command_line(pid: u32) -> Option<String> {
 
 #[cfg(target_os = "windows")]
 pub fn process_command_line(pid: u32) -> Option<String> {
-    let script = format!("(Get-Process -Id {pid} -ErrorAction Stop).ProcessName");
-    let mut command = Command::new("powershell.exe");
+    // 原实现每次 spawn powershell.exe（冷启动 0.8-1.5s），Windows 上频繁调用
+    // （kill_opencode_listeners 要对每个 port 命中的 pid 查一次）会严重拖慢
+    // 运行时清理。tasklist.exe 是内建工具，冷启动只需 ~50ms。
+    let mut command = Command::new("tasklist.exe");
     configure_background_command(&mut command);
-    command
-        .args(["-NoProfile", "-NonInteractive", "-Command", script.as_str()])
+    let output = command
+        .args([
+            "/FI",
+            &format!("PID eq {pid}"),
+            "/FO",
+            "CSV",
+            "/NH",
+        ])
         .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| trim_output(&output.stdout))
-        .filter(|output| !output.is_empty())
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    // CSV 格式第一列是 image name，如 "opencode.exe"。去掉首尾引号即可。
+    let line = trim_output(&output.stdout);
+    if line.is_empty() || line.contains("No tasks are running") {
+        return None;
+    }
+    let first_field = line.split(',').next()?.trim().trim_matches('"');
+    if first_field.is_empty() {
+        None
+    } else {
+        Some(first_field.to_string())
+    }
 }
 
 #[cfg(unix)]
@@ -492,11 +566,12 @@ pub fn kill_pid(pid: u32, signal: &str) -> Result<(), String> {
 
 #[cfg(target_os = "windows")]
 pub fn kill_pid(pid: u32, _signal: &str) -> Result<(), String> {
-    let script = format!("Stop-Process -Id {pid} -Force -ErrorAction Stop");
-    let mut command = Command::new("powershell.exe");
+    // taskkill /F /PID <pid>：内建工具，~50ms 起；PowerShell 冷启动慢一个数量级，
+    // 关闭/切换运行时需要对几个 pid 连续 kill，PowerShell 叠加 1~2 秒卡顿非常明显。
+    let mut command = Command::new("taskkill.exe");
     configure_background_command(&mut command);
     let output = command
-        .args(["-NoProfile", "-NonInteractive", "-Command", script.as_str()])
+        .args(["/F", "/T", "/PID", &pid.to_string()])
         .output()
         .map_err(|error| format!("Failed to terminate pid {pid}: {error}"))?;
 

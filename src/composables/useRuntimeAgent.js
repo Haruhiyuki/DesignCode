@@ -1556,14 +1556,31 @@ async function ensureRuntimeWarmup(backend, options = {}) {
 function scheduleRuntimeWarmups() {
   const backends = ["codex", "claude", "gemini"];
   if (!opencodeAutoStartAttempted && !opencodeAutoStartSuppressed) {
-    backends.unshift("opencode");
+    // OpenCode 的 warmup 会真正 spawn opencode HTTP server（含 MCP 子进程），
+    // 远比另外三个 CLI 预热重。放最前面让它先走，同时单独一条 task，避免阻塞
+    // 其它后端的启动。
     opencodeAutoStartAttempted = true;
+    runInBackground(async () => {
+      await ensureRuntimeWarmup("opencode", { background: true });
+    });
   }
 
-  backends.forEach((backend) => {
-    runInBackground(async () => {
-      await ensureRuntimeWarmup(backend, { background: true });
-    });
+  // Windows 上 CLI spawn 本身就慢（Defender 扫 .exe + 冷启动 Node runtime），
+  // 多运行时同时 warmup 会叠加成数秒级卡顿，UI 感受为"切 runtime 时卡住"。
+  // 串行执行每个 warmup：ensureRuntimeWarmup(background) 自身返回 null，但它
+  // 会把正在进行的 promise 存进 runtimeWarmupPromises[backend]，读出来 await 即可。
+  runInBackground(async () => {
+    for (const backend of backends) {
+      try {
+        ensureRuntimeWarmup(backend, { background: true });
+        const pending = runtimeWarmupPromises[backend]?.promise;
+        if (pending) {
+          await pending;
+        }
+      } catch {
+        // 单个 warmup 失败不影响后续（ensureRuntimeWarmup 内部已处理日志）
+      }
+    }
   });
 }
 
@@ -2081,20 +2098,73 @@ function hydrateFromMeta(meta) {
 // Bootstrap — 主初始化函数
 // ---------------------------------------------------------------------------
 
+// 把任意异常折叠成人类可读文本；bootstrap 阶段的错误一律走这里再往会话控制台灌。
+function describeBootstrapError(error) {
+  if (error instanceof Error) {
+    return error.stack || error.message || String(error);
+  }
+  try {
+    return typeof error === "string" ? error : JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
 async function bootstrap() {
   setStatus(t("status.loadingWorkbench"), "busy", "load");
-
   loadRuntimeProxyPortPreference();
-  const catalog = await getCatalog();
-  state.catalog = catalog;
+
+  // 启动期所有错误都往"会话控制台 → 日志"面板落，并保留 state.warnings 供
+  // PromptDrawer 的 warning 卡片展示，但顶栏不再切到红色 "失败" 态 —— 右上角那颗
+  // 小小的 error 标签完全没法承载 stack trace，用户只看到一个"错误"反而恐慌。
+  const bootstrapErrors = [];
+  const recordBootstrapError = (scope, error) => {
+    const detail = describeBootstrapError(error);
+    bootstrapErrors.push(`[${scope}] ${detail}`);
+    appendAgentOutputEntry(`⚠ ${scope}: ${detail}`);
+  };
+
+  let catalog = null;
+  try {
+    catalog = await getCatalog();
+  } catch (error) {
+    recordBootstrapError("catalog", error);
+  }
+  if (catalog) {
+    state.catalog = catalog;
+  }
   resetDesignConfiguration();
-  const [, , designs] = await Promise.all([
+
+  // Windows 上 node.exe / 各 CLI 首次 spawn 容易被 Defender 扫描卡住或超时。
+  // 用 Promise.allSettled 让三路互相独立：任何一路失败都记到日志里，主界面继续就绪。
+  const [assetsResult, desktopResult, designsResult] = await Promise.allSettled([
     refreshArtAssetLibrary(),
     refreshDesktopIntegration({ skipSessionMessages: true }),
     refreshDesignLibrary()
   ]);
+
+  if (assetsResult.status === "rejected") {
+    recordBootstrapError("art-assets", assetsResult.reason);
+  }
+  if (desktopResult.status === "rejected") {
+    recordBootstrapError("desktop-integration", desktopResult.reason);
+  }
+  if (designsResult.status === "rejected") {
+    recordBootstrapError("design-library", designsResult.reason);
+  }
+
+  const designs = designsResult.status === "fulfilled" ? designsResult.value : [];
   if (designs.length) {
-    await openDesignRecord(designs[0].id);
+    try {
+      await openDesignRecord(designs[0].id);
+    } catch (error) {
+      recordBootstrapError("design-open", error);
+    }
+  }
+
+  if (bootstrapErrors.length) {
+    // 保留给 PromptDrawer 的 warning 卡片用；顶栏维持 ready 而非 error，细节在日志里。
+    state.warnings = bootstrapErrors;
   }
   setStatus(t("status.workbenchReady"), "idle", "load");
 }

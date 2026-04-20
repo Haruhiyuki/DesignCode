@@ -1561,14 +1561,21 @@ pub fn apply_codex_windows_sandbox_override(command: &mut Command) {
 // ---------------------------------------------------------------------------
 
 pub fn codex_login_status(binary: &Path, cwd: &Path) -> Result<(bool, String, Option<String>), String> {
+    // Windows 上 codex login status 偶尔会因沙盒初始化或 auth.json 锁卡住。
+    // 原 .output() 无超时会导致 refreshDesktopIntegration 整体阻塞。加 5s 硬上限。
     let mut command = Command::new(binary);
     configure_background_command(&mut command);
     apply_codex_windows_sandbox_override(&mut command);
-    let output = command
+    let child = command
         .arg("login")
         .arg("status")
         .current_dir(cwd)
-        .output()
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("Failed to inspect Codex login status: {error}"))?;
+    let output = wait_child_output_with_timeout(child, CLI_VERIFY_TIMEOUT)
         .map_err(|error| format!("Failed to inspect Codex login status: {error}"))?;
 
     let stdout = strip_cli_warning_lines(&trim_output(&output.stdout));
