@@ -65,7 +65,6 @@ const { assetFallbackLabel } = useDesignSession();
         :key="asset.id"
         class="asset-thumb-card"
         :class="{ active: state.assets.selectedIds.includes(asset.id) }"
-        @click="setArtAssetSelection(asset.id, !state.assets.selectedIds.includes(asset.id))"
       >
         <div class="asset-thumb-topline">
           <label class="asset-toggle asset-toggle-compact" @click.stop>
@@ -87,7 +86,11 @@ const { assetFallbackLabel } = useDesignSession();
           </button>
         </div>
 
-        <div class="asset-thumb-media" :class="{ 'is-empty': !state.assets.previewUrls[asset.id] }">
+        <div
+          class="asset-thumb-media"
+          :class="{ 'is-empty': !state.assets.previewUrls[asset.id] }"
+          @click="setArtAssetSelection(asset.id, !state.assets.selectedIds.includes(asset.id))"
+        >
           <img
             v-if="state.assets.previewUrls[asset.id]"
             :src="state.assets.previewUrls[asset.id]"
