@@ -38,6 +38,10 @@ async function doCheckForUpdates(proxyValue) {
       updateAvailable: false,
       checkError: e.message || String(e)
     };
+    // "检查更新"按钮经常被用户吐槽"没反应"，把原因灌进会话控制台日志便于反馈。
+    import("./useCliStream.js")
+      .then((mod) => mod.useCliStream().logSessionError("update-check", e))
+      .catch(() => {});
   } finally {
     updateState.checking = false;
   }
@@ -64,6 +68,9 @@ async function doInstallUpdate() {
       ...updateState.result,
       checkError: e.message || String(e)
     };
+    import("./useCliStream.js")
+      .then((mod) => mod.useCliStream().logSessionError("update-install", e))
+      .catch(() => {});
   } finally {
     updateState.installing = false;
   }

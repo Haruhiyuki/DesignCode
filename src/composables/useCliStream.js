@@ -636,6 +636,51 @@ function appendAgentOutputEntry(text, scopeKey = currentConversationScopeKey.val
     : value;
 }
 
+// 会话控制台（右侧日志 Tab）统一的错误上报入口。
+// 把所有 catch 里的 error 连同 scope 标签和时间戳一起灌进 state.agent.output，
+// 用户看"日志 Tab"就能看到完整错误详情，无需再去 drawer 里翻 warning 卡片。
+// 同时也往浏览器控制台打一份 console.error，方便开发调试与用户复制反馈。
+function formatSessionErrorDetail(error) {
+  if (error instanceof Error) {
+    if (error.stack) return error.stack;
+    return error.message || String(error);
+  }
+  if (error && typeof error === "object") {
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
+  }
+  return String(error ?? "");
+}
+
+function logSessionError(scope, error, extra = null) {
+  const detail = formatSessionErrorDetail(error);
+  const scopeLabel = String(scope || "error").trim() || "error";
+  const timestamp = new Date().toLocaleTimeString();
+  const extraLine = extra ? `\n  ${typeof extra === "string" ? extra : JSON.stringify(extra)}` : "";
+  appendAgentOutputEntry(`⚠ [${timestamp}] ${scopeLabel}: ${detail}${extraLine}`);
+  try {
+    // 带上原始 error 对象方便 devtools 展开堆栈；不吃掉，让开发视角也能看见。
+    // eslint-disable-next-line no-console
+    console.error(`[${scopeLabel}]`, error, extra || "");
+  } catch {
+    // 某些 sandbox 环境没有 console —— 静默忽略即可。
+  }
+}
+
+function logSessionWarning(scope, message, extra = null) {
+  const scopeLabel = String(scope || "warn").trim() || "warn";
+  const timestamp = new Date().toLocaleTimeString();
+  const extraLine = extra ? `\n  ${typeof extra === "string" ? extra : JSON.stringify(extra)}` : "";
+  appendAgentOutputEntry(`⚠ [${timestamp}] ${scopeLabel}: ${message}${extraLine}`);
+  try {
+    // eslint-disable-next-line no-console
+    console.warn(`[${scopeLabel}]`, message, extra || "");
+  } catch {}
+}
+
 function markConversationRuntimeScope() {
   const scopeKey = currentConversationScopeKey.value;
   state.agent.streamDesignId = scopeKey;
@@ -882,6 +927,8 @@ export function useCliStream() {
     appendAgentOutputLine,
     beginAgentOutputSection,
     appendAgentOutputEntry,
+    logSessionError,
+    logSessionWarning,
     markConversationRuntimeScope,
     rebindConversationRuntimeScope,
     serializeConversationBlocksForStorage,

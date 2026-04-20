@@ -1406,6 +1406,10 @@ async function saveDesignConfigPayload(payload, options = {}) {
       state.design.saveError = error instanceof Error ? error.message : String(error);
       setStatus(t("status.designConfigSaveFailed"), "error", "save");
     }
+    // 动态导入避免 useSetupConfig ↔ useCliStream 的循环依赖。
+    import("./useCliStream.js")
+      .then((mod) => mod.useCliStream().logSessionError("design-config-save", error, { background }))
+      .catch(() => {});
     return false;
   }
 }

@@ -25,6 +25,9 @@ import { useSetupConfig } from "./useSetupConfig.js";
 import { useConfirmDialog } from "./useConfirmDialog.js";
 import { useConversation } from "./useConversation.js";
 import { useTabs, withTabContext, effectiveActiveTabId } from "./useTabs.js";
+import { useCliStream } from "./useCliStream.js";
+
+const { logSessionError } = useCliStream();
 
 // ---------------------------------------------------------------------------
 // 模块级单例 — 从其他 composable 获取依赖
@@ -500,7 +503,12 @@ function scheduleEditableHtmlSave() {
   clearEditableHtmlSaveTimer();
   state.inspect.saveState = "pending";
   entry.saveTimer = window.setTimeout(() => {
-    persistEditableHtmlChanges(false).catch(() => {});
+    persistEditableHtmlChanges(false).catch((error) => {
+      // 自动保存是后台动作，原本静默吞掉；但"改了半天没保存成功"对用户是无感
+      // 的灾难，必须让会话控制台看得到。内部流程已经会置 state.inspect.saveState
+      // = "error"，这里只是补充详细错误信息。
+      logSessionError("editable-html-autosave", error);
+    });
   }, 900);
 }
 
@@ -730,6 +738,7 @@ async function deleteDesignRecord(designId) {
   } catch (error) {
     state.warnings = [error instanceof Error ? error.message : String(error)];
     setStatus(t("status.designDeleteFailed"), "error", "save");
+    logSessionError("design-delete", error);
   }
 }
 
@@ -1082,6 +1091,7 @@ async function generateDesign() {
         state.composer = previousComposer;
         state.warnings = [error instanceof Error ? error.message : String(error)];
         setStatus(t("status.generationFailed"), "error", "generate");
+        logSessionError("design-generate", error);
       }
     });
   } finally {
@@ -1227,6 +1237,7 @@ async function editDesign() {
         state.composer = previousComposer;
         state.warnings = [error instanceof Error ? error.message : String(error)];
         setStatus(t("status.editFailed"), "error", "edit");
+        logSessionError("design-edit", error);
       }
     });
   } finally {

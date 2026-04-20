@@ -11,6 +11,7 @@ import { t } from "../i18n/index.js";
 import { useWorkspaceState } from "./useWorkspaceState.js";
 import { useSetupConfig } from "./useSetupConfig.js";
 import { useConfirmDialog } from "./useConfirmDialog.js";
+import { useCliStream } from "./useCliStream.js";
 
 // ---------------------------------------------------------------------------
 // 模块级单例 — 从其他 composable 获取依赖
@@ -28,6 +29,8 @@ const {
 } = useSetupConfig();
 
 const { requestConfirmation } = useConfirmDialog();
+
+const { logSessionError } = useCliStream();
 
 // ---------------------------------------------------------------------------
 // 资源库操作
@@ -112,6 +115,7 @@ async function importAssetFiles(files) {
   } catch (error) {
     state.warnings = [error instanceof Error ? error.message : String(error)];
     setStatus(t("status.assetImportFailed"), "error", "save");
+    logSessionError("asset-import-files", error, { fileCount: files.length });
   } finally {
     state.assets.importing = false;
     resetAssetDropState();
@@ -131,6 +135,7 @@ async function importAssetPaths(paths) {
   } catch (error) {
     state.warnings = [error instanceof Error ? error.message : String(error)];
     setStatus(t("status.assetImportFailed"), "error", "save");
+    logSessionError("asset-import-paths", error, { pathCount: paths.length });
   } finally {
     state.assets.importing = false;
     resetAssetDropState();
@@ -383,6 +388,7 @@ async function saveArtAssetMetadata(assetId) {
   } catch (error) {
     state.warnings = [error instanceof Error ? error.message : String(error)];
     setStatus(t("status.assetInfoSaveFailed"), "error", "save");
+    logSessionError("asset-save-metadata", error, { assetId });
     throw error;
   }
 }
@@ -435,6 +441,7 @@ async function deleteArtAssetFromLibrary(assetId) {
   } catch (error) {
     state.warnings = [error instanceof Error ? error.message : String(error)];
     setStatus(t("status.assetDeleteFailed"), "error", "save");
+    logSessionError("asset-delete", error, { assetId, name: asset?.name || "" });
   } finally {
     state.assets.deletingIds = state.assets.deletingIds.filter((item) => item !== assetId);
   }

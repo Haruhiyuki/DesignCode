@@ -12,6 +12,7 @@ import { useWorkspaceState } from "./useWorkspaceState.js";
 import { useSetupConfig } from "./useSetupConfig.js";
 import { useArtAssets } from "./useArtAssets.js";
 import { useCanvasViewport } from "./useCanvasViewport.js";
+import { useCliStream } from "./useCliStream.js";
 
 // 推一个 6s 自动消失的导出完成提示；覆盖上一次（如果还在显示中）。
 // 具体的"打开文件夹"按钮绑定在 ExportToast 组件里。
@@ -52,6 +53,11 @@ const {
 const {
   closeExportMenu,
 } = useCanvasViewport();
+
+const {
+  logSessionError,
+  logSessionWarning,
+} = useCliStream();
 
 // ---------------------------------------------------------------------------
 // 渲染管线
@@ -505,7 +511,10 @@ async function composeImageOverlaysOnBlob(baseBlob, overlays, scale, canvasWidth
           Math.round(overlay.height * scale)
         );
       } catch (error) {
-        console.warn("[export-composite] overlay draw failed", { error: String(error), srcLen: overlay.src.length });
+        logSessionWarning("export-composite", "overlay draw failed", {
+          error: error instanceof Error ? error.message : String(error),
+          srcLen: overlay.src.length
+        });
       }
     }
 
@@ -513,7 +522,7 @@ async function composeImageOverlaysOnBlob(baseBlob, overlays, scale, canvasWidth
       finalCanvas.toBlob((blob) => resolve(blob), "image/png");
     });
   } catch (error) {
-    console.warn("[export-composite] compose failed", { error: String(error) });
+    logSessionError("export-composite", error);
     return null;
   }
 }
@@ -538,6 +547,7 @@ async function exportHtmlAsync() {
   } catch (error) {
     state.warnings = [t("export.htmlExportFailed", { error: error instanceof Error ? error.message : String(error) })];
     setStatus(t("status.htmlExportFailed"), "error", "export");
+    logSessionError("export-html", error);
   }
 }
 
@@ -557,6 +567,7 @@ async function exportSvg() {
   } catch (error) {
     state.warnings = [error instanceof Error ? error.message : String(error)];
     setStatus(t("status.svgExportFailed"), "error", "export");
+    logSessionError("export-svg", error);
   } finally {
     context?.dispose?.();
   }
@@ -572,6 +583,7 @@ async function exportPng() {
   } catch (error) {
     state.warnings = [t("export.pngExportFailed", { error: error instanceof Error ? error.message : String(error) })];
     setStatus(t("status.pngExportFailed"), "error", "export");
+    logSessionError("export-png", error);
   }
 }
 
@@ -603,6 +615,7 @@ async function exportPdf() {
   } catch (error) {
     state.warnings = [t("export.pdfExportFailed", { error: error instanceof Error ? error.message : String(error) })];
     setStatus(t("status.pdfExportFailed"), "error", "export");
+    logSessionError("export-pdf", error);
   }
 }
 
@@ -651,6 +664,7 @@ async function exportPsd() {
   } catch (error) {
     state.warnings = [t("export.psdExportFailed", { error: error instanceof Error ? error.message : String(error) })];
     setStatus(t("status.psdExportFailed"), "error", "export");
+    logSessionError("export-psd", error);
   } finally {
     context?.dispose?.();
   }
@@ -679,9 +693,12 @@ function runExportAction(type) {
   state.design.exportBusy = true;
   Promise.resolve()
     .then(runner)
-    // 各 export 函数内部已经 try/catch 并写到 setStatus / state.warnings；
-    // 这里再 catch 一次仅为兜底，防止未覆盖路径把 Promise 抛成 unhandled。
-    .catch(() => {})
+    // 各 export 函数内部已经 try/catch；这里兜底捕获未覆盖路径，原本是
+    // 静默 .catch(() => {}) 把错误吃掉，现在改为也抛进会话控制台日志，
+    // 让用户能看到"点了导出但没任何反应"这种隐蔽 Bug。
+    .catch((error) => {
+      logSessionError(`export-${type}-uncaught`, error);
+    })
     .finally(() => {
       state.design.exportBusy = false;
     });
