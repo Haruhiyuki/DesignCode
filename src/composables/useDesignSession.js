@@ -20,7 +20,7 @@ import {
   patchEditableTextInHtml,
 } from "../lib/studio-utils.js";
 import { t } from "../i18n/index.js";
-import { useWorkspaceState } from "./useWorkspaceState.js";
+import { useWorkspaceState, replaceItemsInPlace } from "./useWorkspaceState.js";
 import { useSetupConfig } from "./useSetupConfig.js";
 import { useConfirmDialog } from "./useConfirmDialog.js";
 import { useConversation } from "./useConversation.js";
@@ -672,7 +672,9 @@ function applyOpenedDesignRecord(record, options = {}) {
 
 async function refreshDesignLibrary() {
   const items = await listDesignSessions();
-  state.design.items = items;
+  // in-place：state.design.items 是所有 tab 共享的同一份 reactive 数组，
+  // 替换引用会让当前 tab 脱钩，其他 tab 看不到刷新结果。
+  replaceItemsInPlace(state.design.items, items);
   return items;
 }
 
@@ -718,7 +720,7 @@ async function deleteDesignRecord(designId) {
 
   try {
     await requestDeleteDesignSession(designId);
-    state.design.items = remaining;
+    replaceItemsInPlace(state.design.items, remaining);
 
     if (state.design.currentId === designId) {
       clearCurrentDesignWorkspace();

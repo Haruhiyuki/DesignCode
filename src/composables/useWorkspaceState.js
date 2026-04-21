@@ -5,6 +5,18 @@ import { reactive, ref } from "vue";
 import { t } from "../i18n/index.js";
 import { useTabs, overrideTabId } from "./useTabs.js";
 
+// 设计库列表跨 tab 共享：历史抽屉的排序根据 updatedAt，任何一个 tab 里发生
+// 的修改（自动保存、upsert、删除）都必须对所有 tab 可见，否则切 tab 看到的是
+// 各自陈旧的 items 快照，顺序会"在切换时突然变"。所有 tab 的 state.design.items
+// 都指向这个同一个 reactive 数组；mutation 必须走 in-place（splice/push/pop），
+// 不能用 `state.design.items = newArray` 替换引用，否则当前 tab 就脱钩。
+const sharedDesignItems = reactive([]);
+
+export function replaceItemsInPlace(target, next) {
+  target.splice(0, target.length, ...next);
+  return target;
+}
+
 // ---------------------------------------------------------------------------
 // 工厂：每次调用返回一份完全独立的 store（state / ui / refs / 持久化队列）
 // ---------------------------------------------------------------------------
@@ -128,7 +140,7 @@ export function createWorkspaceStore() {
       userAborted: false
     },
     design: {
-      items: [],
+      items: sharedDesignItems,
       currentId: null,
       currentName: "",
       sessionId: null,
@@ -189,18 +201,14 @@ export function createWorkspaceStore() {
     saveBusy: false
   });
 
+  // drawerOpen / activeDrawer / historyView / drawerWidth / drawerFloating /
+  // floatingX / floatingY 在模块级 sharedDrawerUi 里共享——侧栏状态跨 tab
+  // 保留，切换历史设计稿时抽屉不回跳、滚动位置不丢。
   const ui = reactive({
-    drawerOpen: true,
-    activeDrawer: "setup",
-    historyView: "designs",
     rightPanelTab: "chat",
     exportMenuOpen: false,
     exportScale: 2,
-    drawerWidth: 420,
-    drawerFloating: false,
     stylePreviewId: "",
-    floatingX: 0,
-    floatingY: 64,
     zoomMode: "fit",
     previewZoom: 1,
     panX: 0,
@@ -409,7 +417,72 @@ function createReactiveProxy(key) {
 const stateProxy = createReactiveProxy("state");
 const viewportProxy = createReactiveProxy("viewport");
 const fullscreenEditorProxy = createReactiveProxy("fullscreenEditor");
-const uiProxy = createReactiveProxy("ui");
+
+// Drawer/历史相关的几个字段是"整个工作台的侧栏"语义，不该跟 tab 绑。
+// 跟 tab 绑的后果：切换历史设计稿（进入另一个 tab）时 activeDrawer 回到各自
+// 初始值 "setup"，用户被甩出历史列表；而且 HistoryDrawer 因 v-if 条件变化
+// 卸载重建，滚动位置也丢。把这几个字段提到全局 singleton，侧栏状态跨 tab
+// 保留，DOM 也不会被重建。
+const sharedDrawerUi = reactive({
+  drawerOpen: true,
+  activeDrawer: "setup",
+  historyView: "designs",
+  drawerWidth: 420,
+  drawerFloating: false,
+  floatingX: 0,
+  floatingY: 64,
+});
+
+const SHARED_UI_KEYS = new Set([
+  "drawerOpen",
+  "activeDrawer",
+  "historyView",
+  "drawerWidth",
+  "drawerFloating",
+  "floatingX",
+  "floatingY",
+]);
+
+function resolveUiTarget(prop) {
+  if (SHARED_UI_KEYS.has(prop)) return sharedDrawerUi;
+  return useTabs().ensureActiveStore().ui;
+}
+
+const uiProxy = new Proxy({ __proxyKind: "reactive", __proxyKey: "ui" }, {
+  get(_target, prop) {
+    if (prop === "__proxyKind" || prop === "__proxyKey") return _target[prop];
+    if (!SHARED_UI_KEYS.has(prop)) {
+      // 只有 per-tab 字段需要跟 activeTabId / overrideTabId 耦合；共享字段
+      // 直接走 sharedDrawerUi，自身的 reactivity 会驱动依赖更新。
+      void useTabs().activeTabId.value;
+      void overrideTabId.value;
+    }
+    const inner = resolveUiTarget(prop);
+    const value = Reflect.get(inner, prop, inner);
+    return typeof value === "function" ? value.bind(inner) : value;
+  },
+  set(_target, prop, value) {
+    const inner = resolveUiTarget(prop);
+    return Reflect.set(inner, prop, value);
+  },
+  has(_target, prop) {
+    const inner = resolveUiTarget(prop);
+    return Reflect.has(inner, prop);
+  },
+  ownKeys(_target) {
+    const tabUi = useTabs().ensureActiveStore().ui;
+    return [...new Set([...Reflect.ownKeys(tabUi), ...SHARED_UI_KEYS])];
+  },
+  getOwnPropertyDescriptor(_target, prop) {
+    const inner = resolveUiTarget(prop);
+    return Reflect.getOwnPropertyDescriptor(inner, prop);
+  },
+  deleteProperty(_target, prop) {
+    const inner = resolveUiTarget(prop);
+    return Reflect.deleteProperty(inner, prop);
+  }
+});
+
 const interactionProxy = createReactiveProxy("interaction");
 const runtimeWarmupStateProxy = createReactiveProxy("runtimeWarmupState");
 const conversationExpandedBlocksProxy = createReactiveProxy("conversationExpandedBlocks");

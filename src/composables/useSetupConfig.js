@@ -14,7 +14,7 @@ import {
 import { updateDesignSession as requestUpdateDesignSession } from "../lib/desktop-api.js";
 import { t, locale } from "../i18n/index.js";
 import { RAIL_ICONS } from "../constants/icons.js";
-import { useWorkspaceState } from "./useWorkspaceState.js";
+import { useWorkspaceState, replaceItemsInPlace } from "./useWorkspaceState.js";
 import { effectiveActiveTabId } from "./useTabs.js";
 
 const {
@@ -1352,7 +1352,12 @@ function upsertDesignLibraryItem(design, previousId = null) {
   }
 
   next.sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")));
-  state.design.items = next;
+  // 关键：in-place 替换，不重新赋值 state.design.items 本身。
+  // items 数组是模块级共享的 reactive（见 useWorkspaceState 的 sharedDesignItems），
+  // 一旦这里写成 state.design.items = next，当前 tab 就切到新数组，其他 tab
+  // 仍指向旧数组，后续 mutation 对其他 tab 不可见 —— 用户切换设计稿时就会
+  // 看到"顺序变了"（其实是看到了另一个 tab 各自陈旧的快照）。
+  replaceItemsInPlace(state.design.items, next);
 }
 
 function shouldApplyPersistResult(targetDesignId, nextDesignId = targetDesignId) {

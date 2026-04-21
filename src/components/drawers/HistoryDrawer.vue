@@ -4,12 +4,23 @@ import { t } from "../../i18n/index.js";
 import { useWorkspaceState } from "../../composables/useWorkspaceState.js";
 import { useSetupConfig } from "../../composables/useSetupConfig.js";
 import { useDesignSession } from "../../composables/useDesignSession.js";
-import { useTabs } from "../../composables/useTabs.js";
+import { useTabs, getTabPendingDesignId } from "../../composables/useTabs.js";
 
 const { state, ui } = useWorkspaceState();
 const { hasActiveDesignSession, designLibrary, formatHistoryDate, formatHistoryDateTime } = useSetupConfig();
 const { startNewDesignSession, openDesignRecord, deleteDesignRecord, refreshDesignLibrary, restoreVersion } = useDesignSession();
-const { createTabForNewDesign, openOrCreateForDesign } = useTabs();
+const { createTabForNewDesign, openOrCreateForDesign, activeTabId } = useTabs();
+
+// 当前"被选中"的 designId：
+// 1) 优先取该 tab 的 pendingDesignId —— 点击历史设计稿那一帧就写好，让选中
+//    标记立刻生效，不用等后端 open 返回 state.design.currentId。
+// 2) 加载完成后 pending 会被 useTabs 里的 watcher 自动清掉，fallback 回
+//    state.design.currentId，这是"当前真正显示的设计"的正确来源。
+// 不用 tab.designId —— 那是 createTab 时的初始目标快照，tab 内部后续切
+// 设计（restoreVersion / 同 tab 另存等）时不会更新，会让标记错位到别的卡片。
+function activeDesignId() {
+  return getTabPendingDesignId(activeTabId.value) || state.design.currentId;
+}
 </script>
 
 <template>
@@ -57,13 +68,13 @@ const { createTabForNewDesign, openOrCreateForDesign } = useTabs();
         v-for="item in designLibrary"
         :key="item.id"
         class="layer-card layer-card-action history-design-card"
-        :data-active="item.id === state.design.currentId"
+        :data-active="item.id === activeDesignId()"
         @click="openOrCreateForDesign(item.id)"
       >
         <div class="history-design-card-head">
           <strong>{{ item.title }}</strong>
           <div class="history-design-card-actions">
-            <span v-if="item.id === state.design.currentId" class="history-design-current">{{ t("history.currentBadge") }}</span>
+            <span v-if="item.id === activeDesignId()" class="history-design-current">{{ t("history.currentBadge") }}</span>
             <button
               type="button"
               class="button button-ghost history-design-delete"

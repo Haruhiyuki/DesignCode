@@ -8,6 +8,30 @@ import { t } from "../i18n/index.js";
 // 内部 ID 计数器：保证每次新建 tab 拿到唯一 id
 let tabIdCounter = 0;
 
+// 点击历史设计稿的那一帧就在目标 tab 上记下目标 designId；新建 tab 需要
+// 时间加载 design，期间 state.design.currentId 还是 null，界面上的选中标记
+// 如果只绑 currentId 就会延迟到加载完才生效。pendingDesignId 让选中标记
+// 乐观地跟着点击动作走，加载完成（或别的路径把 currentId 变到目标值）后
+// 自动被清掉，不会遮住真实的 currentId。
+//
+// 注意：tab 本身只是普通对象（见下方 createTab 的设计原因），所以 pending
+// 单独存在一个 reactive map 里，按 tabId 索引。
+const pendingDesignIdByTab = shallowReactive({});
+
+export function setTabPendingDesignId(tabId, designId) {
+  if (!tabId) return;
+  if (designId) {
+    pendingDesignIdByTab[tabId] = designId;
+  } else {
+    delete pendingDesignIdByTab[tabId];
+  }
+}
+
+export function getTabPendingDesignId(tabId) {
+  if (!tabId) return null;
+  return pendingDesignIdByTab[tabId] || null;
+}
+
 function nextTabId() {
   tabIdCounter += 1;
   const random = Math.floor(Math.random() * 0xffff).toString(16).padStart(4, "0");
@@ -171,6 +195,19 @@ function createTab({ activate = true, designId = null, pendingAction = null } = 
   if (activate || tabs.length === 1) {
     activeTabId.value = id;
   }
+
+  // pendingDesignId 在 state.design.currentId 追平目标时自动失效，避免残留
+  // 一个过期的 pending 遮住后续真实的 currentId（例如用户在同一个 tab 里用
+  // 别的路径切到另一张设计）。
+  watch(
+    () => tab.store.state.design.currentId,
+    (currentId) => {
+      if (currentId && pendingDesignIdByTab[id] === currentId) {
+        delete pendingDesignIdByTab[id];
+      }
+    }
+  );
+
   return tab;
 }
 
@@ -184,14 +221,20 @@ function openOrCreateForDesign(designId) {
   if (!designId) return null;
   const existing = findByDesignId(designId);
   if (existing) {
+    // 乐观地把选中标记打到点击那一帧（即使 existing 的 state.design.currentId
+    // 此刻还没切过去，比如切版本 / 加载中）。currentId 追平时由消费侧或 watch
+    // 清空 pending。
+    setTabPendingDesignId(existing.id, designId);
     switchTo(existing.id);
     return existing;
   }
-  return createTab({
+  const tab = createTab({
     activate: true,
     designId,
     pendingAction: { type: "open", designId }
   });
+  setTabPendingDesignId(tab.id, designId);
+  return tab;
 }
 
 // 由 WorkbenchContainer onMounted 调用：取出并清除当前 tab 的 pendingAction
@@ -241,6 +284,8 @@ async function closeTab(tabId) {
   }
 
   tabs.splice(index, 1);
+  setTabPendingDesignId(tabId, null);
+
 
   if (tabs.length === 0) {
     // 永远保持至少一个 tab
