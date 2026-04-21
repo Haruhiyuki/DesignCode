@@ -695,8 +695,11 @@ fn runtime_backend_from_payload(payload: &Value) -> &str {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-fn desktop_catalog(app: AppHandle) -> Result<Value, String> {
-    run_node_bridge(&app, "catalog", None)
+async fn desktop_catalog(app: AppHandle) -> Result<Value, String> {
+    let handle = app.clone();
+    let join = tokio::task::spawn_blocking(move || run_node_bridge(&handle, "catalog", None));
+    join.await
+        .map_err(|error| format!("Catalog task failed to join: {error}"))?
 }
 
 #[tauri::command]
@@ -730,53 +733,100 @@ async fn desktop_edit_design(
 }
 
 #[tauri::command]
-fn desktop_designs_list(app: AppHandle) -> Result<Value, String> {
-    run_node_bridge(&app, "design-list", None)
+async fn desktop_designs_list(app: AppHandle) -> Result<Value, String> {
+    let handle = app.clone();
+    let join = tokio::task::spawn_blocking(move || run_node_bridge(&handle, "design-list", None));
+    join.await
+        .map_err(|error| format!("Designs list task failed to join: {error}"))?
 }
 
 #[tauri::command]
-fn desktop_design_create(app: AppHandle, payload: Value) -> Result<Value, String> {
-    run_node_bridge(&app, "design-create", Some(payload))
+async fn desktop_design_create(app: AppHandle, payload: Value) -> Result<Value, String> {
+    let handle = app.clone();
+    let join = tokio::task::spawn_blocking(move || {
+        run_node_bridge(&handle, "design-create", Some(payload))
+    });
+    join.await
+        .map_err(|error| format!("Design create task failed to join: {error}"))?
 }
 
 #[tauri::command]
-fn desktop_art_assets_list(app: AppHandle) -> Result<Value, String> {
-    run_node_bridge(&app, "art-assets-list", None)
+async fn desktop_art_assets_list(app: AppHandle) -> Result<Value, String> {
+    let handle = app.clone();
+    let join =
+        tokio::task::spawn_blocking(move || run_node_bridge(&handle, "art-assets-list", None));
+    join.await
+        .map_err(|error| format!("Art assets list task failed to join: {error}"))?
 }
 
 #[tauri::command]
-fn desktop_art_asset_import(app: AppHandle, payload: Value) -> Result<Value, String> {
-    run_node_bridge(&app, "art-asset-import", Some(payload))
+async fn desktop_art_asset_import(app: AppHandle, payload: Value) -> Result<Value, String> {
+    let handle = app.clone();
+    let join = tokio::task::spawn_blocking(move || {
+        run_node_bridge(&handle, "art-asset-import", Some(payload))
+    });
+    join.await
+        .map_err(|error| format!("Art asset import task failed to join: {error}"))?
 }
 
 #[tauri::command]
-fn desktop_art_asset_import_paths(app: AppHandle, payload: Value) -> Result<Value, String> {
-    run_node_bridge(&app, "art-asset-import-paths", Some(payload))
+async fn desktop_art_asset_import_paths(app: AppHandle, payload: Value) -> Result<Value, String> {
+    let handle = app.clone();
+    let join = tokio::task::spawn_blocking(move || {
+        run_node_bridge(&handle, "art-asset-import-paths", Some(payload))
+    });
+    join.await
+        .map_err(|error| format!("Art asset import paths task failed to join: {error}"))?
 }
 
 #[tauri::command]
-fn desktop_art_asset_update(app: AppHandle, payload: Value) -> Result<Value, String> {
-    run_node_bridge(&app, "art-asset-update", Some(payload))
+async fn desktop_art_asset_update(app: AppHandle, payload: Value) -> Result<Value, String> {
+    let handle = app.clone();
+    let join = tokio::task::spawn_blocking(move || {
+        run_node_bridge(&handle, "art-asset-update", Some(payload))
+    });
+    join.await
+        .map_err(|error| format!("Art asset update task failed to join: {error}"))?
 }
 
 #[tauri::command]
-fn desktop_art_asset_delete(app: AppHandle, payload: Value) -> Result<Value, String> {
-    run_node_bridge(&app, "art-asset-delete", Some(payload))
+async fn desktop_art_asset_delete(app: AppHandle, payload: Value) -> Result<Value, String> {
+    let handle = app.clone();
+    let join = tokio::task::spawn_blocking(move || {
+        run_node_bridge(&handle, "art-asset-delete", Some(payload))
+    });
+    join.await
+        .map_err(|error| format!("Art asset delete task failed to join: {error}"))?
 }
 
 #[tauri::command]
-fn desktop_art_asset_preview(app: AppHandle, payload: Value) -> Result<Value, String> {
-    run_node_bridge(&app, "art-asset-preview", Some(payload))
+async fn desktop_art_asset_preview(app: AppHandle, payload: Value) -> Result<Value, String> {
+    let handle = app.clone();
+    let join = tokio::task::spawn_blocking(move || {
+        run_node_bridge(&handle, "art-asset-preview", Some(payload))
+    });
+    join.await
+        .map_err(|error| format!("Art asset preview task failed to join: {error}"))?
 }
 
 #[tauri::command]
-fn desktop_design_open(app: AppHandle, design_id: String) -> Result<Value, String> {
-    run_node_bridge(&app, "design-open", Some(json!({ "designId": design_id })))
+async fn desktop_design_open(app: AppHandle, design_id: String) -> Result<Value, String> {
+    let handle = app.clone();
+    let join = tokio::task::spawn_blocking(move || {
+        run_node_bridge(&handle, "design-open", Some(json!({ "designId": design_id })))
+    });
+    join.await
+        .map_err(|error| format!("Design open task failed to join: {error}"))?
 }
 
 #[tauri::command]
-fn desktop_design_delete(app: AppHandle, design_id: String) -> Result<Value, String> {
-    run_node_bridge(&app, "design-delete", Some(json!({ "designId": design_id })))
+async fn desktop_design_delete(app: AppHandle, design_id: String) -> Result<Value, String> {
+    let handle = app.clone();
+    let join = tokio::task::spawn_blocking(move || {
+        run_node_bridge(&handle, "design-delete", Some(json!({ "designId": design_id })))
+    });
+    join.await
+        .map_err(|error| format!("Design delete task failed to join: {error}"))?
 }
 
 #[tauri::command]
@@ -817,42 +867,57 @@ async fn desktop_design_update_html(app: AppHandle, payload: Value) -> Result<Va
 }
 
 #[tauri::command]
-fn desktop_design_commit_read(
+async fn desktop_design_commit_read(
     app: AppHandle,
     design_id: String,
     commit_hash: String,
 ) -> Result<Value, String> {
-    run_node_bridge(
-        &app,
-        "design-commit-read",
-        Some(json!({
-            "designId": design_id,
-            "commitHash": commit_hash
-        })),
-    )
+    let handle = app.clone();
+    let join = tokio::task::spawn_blocking(move || {
+        run_node_bridge(
+            &handle,
+            "design-commit-read",
+            Some(json!({
+                "designId": design_id,
+                "commitHash": commit_hash
+            })),
+        )
+    });
+    join.await
+        .map_err(|error| format!("Design commit read task failed to join: {error}"))?
 }
 
 #[tauri::command]
-fn desktop_design_attach_session(
+async fn desktop_design_attach_session(
     app: AppHandle,
     design_id: String,
     session_id: String,
     runtime_backend: Option<String>,
 ) -> Result<Value, String> {
-    run_node_bridge(
-        &app,
-        "design-attach-session",
-        Some(json!({
-            "designId": design_id,
-            "sessionId": session_id,
-            "runtimeBackend": runtime_backend
-        })),
-    )
+    let handle = app.clone();
+    let join = tokio::task::spawn_blocking(move || {
+        run_node_bridge(
+            &handle,
+            "design-attach-session",
+            Some(json!({
+                "designId": design_id,
+                "sessionId": session_id,
+                "runtimeBackend": runtime_backend
+            })),
+        )
+    });
+    join.await
+        .map_err(|error| format!("Design attach session task failed to join: {error}"))?
 }
 
 #[tauri::command]
-fn desktop_design_sync_workspace(app: AppHandle, payload: Value) -> Result<Value, String> {
-    run_node_bridge(&app, "design-sync-workspace", Some(payload))
+async fn desktop_design_sync_workspace(app: AppHandle, payload: Value) -> Result<Value, String> {
+    let handle = app.clone();
+    let join = tokio::task::spawn_blocking(move || {
+        run_node_bridge(&handle, "design-sync-workspace", Some(payload))
+    });
+    join.await
+        .map_err(|error| format!("Design sync workspace task failed to join: {error}"))?
 }
 
 #[tauri::command]
