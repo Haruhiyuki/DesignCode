@@ -651,6 +651,72 @@ function parseCodexStreamBlock(event) {
 // assistant text，result 命中就丢掉（日志那条路已经做过相同处理）。
 let _lastClaudeBlockText = "";
 
+// 从路径中取文件名，用于把 "/Users/foo/bar/baz.txt" 压成 "baz.txt"。
+// Claude 的 Read/Write/Edit 常传完整绝对路径，直接显示会把一行塞满。
+function basenameFromPath(value) {
+  const text = String(value || "").trim();
+  if (!text) {
+    return "";
+  }
+  const cleaned = text.replace(/[\\/]+$/u, "");
+  const parts = cleaned.split(/[\\/]/u);
+  return parts[parts.length - 1] || cleaned;
+}
+
+function truncateInlineText(value, limit = 48) {
+  const text = String(value || "").replace(/\s+/gu, " ").trim();
+  if (!text || text.length <= limit) {
+    return text;
+  }
+  return `${text.slice(0, Math.max(0, limit - 1)).trimEnd()}…`;
+}
+
+// Claude tool_use → 简短标识。目的是控制占位：对话流里用户关心的是
+// "Claude 读了哪个文件"，而不是完整绝对路径；完整 input 依然保留在日志 Tab。
+function formatClaudeToolBrief(toolName, toolInput = {}) {
+  const tool = String(toolName || "").trim();
+  const filePath = pickFirstText(toolInput.file_path, toolInput.path, toolInput.filePath, toolInput.notebook_path);
+  const fileName = basenameFromPath(filePath);
+  const pattern = pickFirstText(toolInput.pattern, toolInput.query);
+  const url = pickFirstText(toolInput.url);
+  const subagent = pickFirstText(toolInput.subagent_type, toolInput.description);
+
+  switch (tool) {
+    case "Read":
+      return t("chat.claudeTool.read", { name: fileName || truncateInlineText(filePath) || tool });
+    case "Write":
+      return t("chat.claudeTool.write", { name: fileName || truncateInlineText(filePath) || tool });
+    case "Edit":
+    case "MultiEdit":
+      return t("chat.claudeTool.edit", { name: fileName || truncateInlineText(filePath) || tool });
+    case "NotebookEdit":
+      return t("chat.claudeTool.notebook", { name: fileName || truncateInlineText(filePath) || tool });
+    case "Glob":
+      return t("chat.claudeTool.glob", { name: truncateInlineText(pattern) || tool });
+    case "Grep":
+      return t("chat.claudeTool.grep", { name: truncateInlineText(pattern) || tool });
+    case "LS": {
+      const label = fileName || truncateInlineText(filePath);
+      return t("chat.claudeTool.ls", { name: label || tool });
+    }
+    case "Task":
+      return t("chat.claudeTool.task", { name: truncateInlineText(subagent) || tool });
+    case "WebFetch":
+      return t("chat.claudeTool.webFetch", { name: truncateInlineText(url) || tool });
+    case "WebSearch":
+      return t("chat.claudeTool.webSearch", { name: truncateInlineText(pattern || url) || tool });
+    default: {
+      const detail = truncateInlineText(fileName || filePath || pattern || url || subagent);
+      if (!tool) {
+        return detail || "";
+      }
+      return detail
+        ? t("chat.claudeTool.genericWith", { tool, name: detail })
+        : t("chat.claudeTool.generic", { tool });
+    }
+  }
+}
+
 function parseClaudeStreamBlock(event) {
   if (event.type === "system" && event.subtype === "init") {
     _lastClaudeBlockText = "";
@@ -679,21 +745,55 @@ function parseClaudeStreamBlock(event) {
 
   if (event.type === "assistant") {
     const items = Array.isArray(event.message?.content) ? event.message.content : [];
+    const blocks = [];
+
     for (const item of items) {
-      if (item?.type === "tool_use") {
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+
+      // 思考/推理：以默认 thought 样式（小字、斜体、灰色）展示，
+      // 超过 conversationBlockExpandable 阈值（>420 字符或 >8 行）时会自动折叠。
+      if (item.type === "thinking" || item.type === "reasoning") {
+        const content = normalizeConversationMessage(
+          pickFirstText(item.thinking, item.text, item.content, item.summary)
+        );
+        if (content) {
+          blocks.push({
+            id: item.id || nextAgentStreamBlockId("thinking"),
+            type: "thought",
+            content
+          });
+        }
+        continue;
+      }
+
+      // redacted_thinking：Anthropic 会把敏感思考块加密，正文取不出来；
+      // 仅留一条提示以示"确实在思考"。
+      if (item.type === "redacted_thinking") {
+        blocks.push({
+          id: item.id || nextAgentStreamBlockId("thinking"),
+          type: "thought",
+          content: t("chat.claudeTool.redactedThinking")
+        });
+        continue;
+      }
+
+      if (item.type === "tool_use") {
         const toolName = String(item.name || "").trim();
         const toolInput = item.input || {};
 
         if (toolName === "TodoWrite") {
           const todoItems = normalizeTodoEntries(toolInput);
           if (todoItems.length) {
-            return {
+            blocks.push({
               id: item.id || nextAgentStreamBlockId("todo"),
               type: "todo",
               title: "Todo List",
               items: todoItems,
               status: "running"
-            };
+            });
+            continue;
           }
         }
 
@@ -705,45 +805,46 @@ function parseClaudeStreamBlock(event) {
             toolInput.argv
           );
           if (command) {
-            return {
+            blocks.push({
               id: item.id || nextAgentStreamBlockId("command"),
               type: "command",
               command,
               output: "",
               status: "running"
-            };
+            });
+            continue;
           }
         }
 
-        const toolSummary = pickFirstText(
-          toolInput.path,
-          toolInput.file_path,
-          toolInput.pattern,
-          toolInput.query,
-          toolInput.command
-        );
-        const label = toolName || "Tool";
-        if (label) {
-          return {
-            id: item.id || nextAgentStreamBlockId("text"),
+        const brief = formatClaudeToolBrief(toolName, toolInput);
+        if (brief) {
+          blocks.push({
+            id: item.id || nextAgentStreamBlockId("tool"),
             type: "thought",
-            content: toolSummary ? `${label}: ${toolSummary}` : label
-          };
+            content: brief
+          });
         }
+        continue;
       }
 
-      if (item?.type === "text") {
+      if (item.type === "text") {
         const safeContent = normalizeConversationMessage(item.text || "");
         if (safeContent) {
           _lastClaudeBlockText = safeContent;
-          return {
+          blocks.push({
             id: nextAgentStreamBlockId("text"),
             type: "text",
             content: safeContent
-          };
+          });
         }
+        continue;
       }
     }
+
+    if (blocks.length === 0) {
+      return null;
+    }
+    return blocks.length === 1 ? blocks[0] : blocks;
   }
 
   return null;

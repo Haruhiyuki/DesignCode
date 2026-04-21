@@ -271,9 +271,33 @@ function formatClaudeJsonEvent(event) {
   }
 
   if (eventType === "assistant") {
+    // 一条 assistant 事件的 content 可以同时包含 thinking、tool_use、text，
+    // 以前循环里遇到第一条就 return 把其它都丢了；现在把所有识别到的都串起来
+    // 写进日志，这样思考过程也能在日志 Tab 里被看到。
     const items = Array.isArray(event.message?.content) ? event.message.content : [];
+    const lines = [];
+
     for (const item of items) {
-      if (item?.type === "tool_use") {
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+
+      if (item.type === "thinking" || item.type === "reasoning") {
+        const thinking = sanitizeAgentLogMessage(
+          pickFirstText(item.thinking, item.text, item.content, item.summary)
+        );
+        if (thinking) {
+          lines.push(`[thought]\n${thinking}`);
+        }
+        continue;
+      }
+
+      if (item.type === "redacted_thinking") {
+        lines.push("[thought] redacted");
+        continue;
+      }
+
+      if (item.type === "tool_use") {
         const toolName = String(item.name || "").trim();
         const toolInput = item.input || {};
 
@@ -284,33 +308,32 @@ function formatClaudeJsonEvent(event) {
             toolInput.commandLine,
             toolInput.argv
           );
-          return command ? `[command] ${command}` : "[command] Bash";
+          lines.push(command ? `[command] ${command}` : "[command] Bash");
+          continue;
         }
 
         if (toolName === "TodoWrite") {
           const todoItems = normalizeTodoEntries(toolInput);
-          return todoItems.length ? t("chat.todoCount", { count: todoItems.length }) : "[todo] Updated task list";
+          lines.push(todoItems.length ? t("chat.todoCount", { count: todoItems.length }) : "[todo] Updated task list");
+          continue;
         }
 
-        return toolName ? `[claude] ${toolName}` : "[claude] tool_use";
+        lines.push(toolName ? `[claude] ${toolName}` : "[claude] tool_use");
+        continue;
       }
 
-      if (item?.type === "text") {
+      if (item.type === "text") {
         const message = sanitizeAgentLogMessage(item.text || "");
         if (message) {
           _lastClaudeAssistantText = message;
-          return `[message]\n${message}`;
+          lines.push(`[message]\n${message}`);
         }
+        continue;
       }
+    }
 
-      if (item?.type === "thinking" || item?.type === "reasoning" || item?.type === "redacted_thinking") {
-        const thinking = sanitizeAgentLogMessage(
-          pickFirstText(item.text, item.thinking, item.content, item.summary)
-        );
-        if (thinking) {
-          return `[thought]\n${thinking}`;
-        }
-      }
+    if (lines.length) {
+      return lines.join("\n");
     }
   }
 
@@ -855,8 +878,11 @@ async function beginCliStream(streamId, backend, suppressedBlocks = []) {
       if (formatted) {
         appendAgentOutputLine(prefixMultilineLog(formatted, formatStreamElapsedTag()));
       }
-      const block = parseCliStreamBlock(payload);
-      if (block) {
+      const parsed = parseCliStreamBlock(payload);
+      // parseClaudeStreamBlock 现在可能一次返回多个块（如一条 assistant 事件
+      // 同时携带 thinking + tool_use），这里把数组和单块统一处理。
+      const blocks = Array.isArray(parsed) ? parsed : parsed ? [parsed] : [];
+      for (const block of blocks) {
         upsertAgentStreamBlock(block);
       }
     });
