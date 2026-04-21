@@ -780,7 +780,11 @@ fn desktop_design_delete(app: AppHandle, design_id: String) -> Result<Value, Str
 }
 
 #[tauri::command]
-fn desktop_design_update(app: AppHandle, design_id: String, payload: Value) -> Result<Value, String> {
+async fn desktop_design_update(
+    app: AppHandle,
+    design_id: String,
+    payload: Value,
+) -> Result<Value, String> {
     let merged = if let Some(object) = payload.as_object() {
         let mut map = object.clone();
         map.insert("designId".to_string(), Value::String(design_id));
@@ -789,12 +793,27 @@ fn desktop_design_update(app: AppHandle, design_id: String, payload: Value) -> R
         json!({ "designId": design_id, "payload": payload })
     };
 
-    run_node_bridge(&app, "design-update", Some(merged))
+    // 素材勾选 / 字段编辑走的都是这条保存路径，自动保存高频触发；同步 command
+    // 会在主线程阻塞到 Node 子进程返回，直接拖住 WebView。
+    let handle = app.clone();
+    let join = tokio::task::spawn_blocking(move || {
+        run_node_bridge(&handle, "design-update", Some(merged))
+    });
+    join.await
+        .map_err(|error| format!("Design update task failed to join: {error}"))?
 }
 
 #[tauri::command]
-fn desktop_design_update_html(app: AppHandle, payload: Value) -> Result<Value, String> {
-    run_node_bridge(&app, "design-update-html", Some(payload))
+async fn desktop_design_update_html(app: AppHandle, payload: Value) -> Result<Value, String> {
+    // 同步 command 会在主 UI 线程上执行，而 run_node_bridge 要 spawn Node 子进程
+    // 并阻塞等待其结束（几百 ms 级），直接锁住 WebView。自动保存对用户应当无感，
+    // 所以放到 blocking 线程池里，避免每次静默保存都引发一下可见的卡顿。
+    let handle = app.clone();
+    let join = tokio::task::spawn_blocking(move || {
+        run_node_bridge(&handle, "design-update-html", Some(payload))
+    });
+    join.await
+        .map_err(|error| format!("Design update HTML task failed to join: {error}"))?
 }
 
 #[tauri::command]
