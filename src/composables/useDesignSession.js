@@ -685,15 +685,21 @@ async function openDesignRecord(designId) {
 
   queuePendingWorkspaceStatePersistence();
 
-  const record = await openDesignSession(designId);
-  applyOpenedDesignRecord(record);
-  setStatus(t("status.designLoaded", { id: designId }), "idle");
-  runInBackground(async () => {
-    await Promise.allSettled([
-      refreshDesignLibrary(),
-      _refreshDesktopIntegration({ skipSessionMessages: true })
-    ]);
-  });
+  state.design.openBusy = true;
+  setStatus(t("status.loadingText"), "busy", "load");
+  try {
+    const record = await openDesignSession(designId);
+    applyOpenedDesignRecord(record);
+    setStatus(t("status.designLoaded", { id: designId }), "idle");
+    runInBackground(async () => {
+      await Promise.allSettled([
+        refreshDesignLibrary(),
+        _refreshDesktopIntegration({ skipSessionMessages: true })
+      ]);
+    });
+  } finally {
+    state.design.openBusy = false;
+  }
 }
 
 async function deleteDesignRecord(designId) {
@@ -725,8 +731,14 @@ async function deleteDesignRecord(designId) {
     if (state.design.currentId === designId) {
       clearCurrentDesignWorkspace();
       if (remaining.length) {
-        const record = await openDesignSession(remaining[0].id);
-        applyOpenedDesignRecord(record);
+        state.design.openBusy = true;
+        setStatus(t("status.loadingText"), "busy", "load");
+        try {
+          const record = await openDesignSession(remaining[0].id);
+          applyOpenedDesignRecord(record);
+        } finally {
+          state.design.openBusy = false;
+        }
       }
     }
 

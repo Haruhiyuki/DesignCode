@@ -945,7 +945,9 @@ const promptSizeLabel = computed(() => currentSize.value?.label || t("setup.size
 const consoleStatusLabel = computed(() => compactWorkbenchStatus(state.statusTone, state.statusCategory));
 
 const canvasLoadingVisible = computed(() => {
-  if (state.design.createBusy) {
+  // openBusy 放在 hasDesign 短路之前：打开别的设计稿时旧 HTML 还留在画布上，
+  // hasDesign=true，短路会直接吞掉 loading 覆盖层；这里优先亮出来。
+  if (state.design.createBusy || state.design.openBusy) {
     return true;
   }
   if (hasDesign.value) {
@@ -959,7 +961,7 @@ const canvasLoadingLabel = computed(() => {
   if (state.design.createBusy) {
     return t("status.creatingDesign");
   }
-  if (state.statusCategory === "load") {
+  if (state.design.openBusy || state.statusCategory === "load") {
     return t("status.loadingText");
   }
   return t("status.generating");
@@ -969,7 +971,7 @@ const canvasLoadingDetail = computed(() => {
   if (state.design.createBusy) {
     return t("status.loadingDetail");
   }
-  if (state.statusCategory === "load") {
+  if (state.design.openBusy || state.statusCategory === "load") {
     return t("status.loadingDetail");
   }
   return t("status.generatingDetail");

@@ -156,6 +156,12 @@ export function createWorkspaceStore() {
       activeCommitHash: null,
       browsingHistory: false,
       createBusy: false,
+      // 打开历史设计稿时置 true：后端 node bridge 调用 + iframe srcdoc 重新
+      // 解析 HTML 期间画布要显示 loading 覆盖层。跟 createBusy 拆开：canvasLoadingLabel
+      // 的文案不同（"加载"vs"创建"），而且 openBusy 期间 state.currentHtml 还
+      // 留着上一张设计稿，hasDesign=true 会让 canvasLoadingVisible 短路，这个
+      // 字段正是为了绕过那个短路。
+      openBusy: false,
       createError: "",
       saveState: "idle",
       saveError: "",
