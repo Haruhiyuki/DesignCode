@@ -87,6 +87,25 @@ function run(cmd, args, options = {}) {
   execFileSync(cmd, args, { stdio: "inherit", timeout: 600_000, ...options });
 }
 
+// `hdiutil create` 在 CI macOS runner 上偶发 "Resource busy"：Step 1 刚
+// staple 完 .app，syspolicyd / XProtect / fseventsd 仍在对这个新 .app 做
+// 异步验证和索引，紧接着 cp 到 staging + hdiutil 要把源压成 DMG 时就撞
+// 到未释放的锁。不是逻辑错误，是时序竞争，重试几次就能过。
+function runWithRetry(cmd, args, { retries = 4, delaySec = 5 } = {}) {
+  for (let attempt = 1; attempt <= retries; attempt += 1) {
+    try {
+      run(cmd, args);
+      return;
+    } catch (error) {
+      if (attempt === retries) throw error;
+      const reason = String(error?.message || error).split("\n")[0];
+      console.warn(`  ! ${cmd} failed (attempt ${attempt}/${retries}): ${reason}`);
+      console.warn(`    retrying in ${delaySec}s ...`);
+      execFileSync("sleep", [String(delaySec)]);
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 1. 公证 .app
 // ---------------------------------------------------------------------------
@@ -131,7 +150,7 @@ execFileSync("mkdir", ["-p", dmgStaging]);
 execFileSync("cp", ["-R", appPath, dmgStaging]);
 execFileSync("ln", ["-s", "/Applications", path.join(dmgStaging, "Applications")]);
 
-run("hdiutil", [
+runWithRetry("hdiutil", [
   "create",
   "-volname", productName,
   "-srcfolder", dmgStaging,
