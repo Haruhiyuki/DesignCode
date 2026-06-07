@@ -689,6 +689,7 @@ pub fn bundled_runtime_source_path(app: &AppHandle, relative: &Path) -> Option<P
     bundled_runtime_source_candidates(app, relative)
         .into_iter()
         .find(|candidate| candidate.exists())
+        .map(normalize_windows_user_path)
 }
 
 #[cfg(target_os = "windows")]
@@ -714,7 +715,7 @@ pub fn normalize_requested_binary_path(candidate: PathBuf) -> PathBuf {
 
         let mut alternatives = Vec::new();
         match extension.as_deref() {
-            Some("exe") => return candidate,
+            Some("exe") => return normalize_windows_user_path(candidate),
             Some("ps1") => {
                 alternatives.push(candidate.with_extension("exe"));
                 alternatives.push(candidate.with_extension("cmd"));
@@ -734,12 +735,12 @@ pub fn normalize_requested_binary_path(candidate: PathBuf) -> PathBuf {
 
         for alternative in alternatives {
             if alternative.exists() {
-                return alternative;
+                return normalize_windows_user_path(alternative);
             }
         }
     }
 
-    candidate
+    normalize_windows_user_path(candidate)
 }
 
 pub fn stage_bundled_runtime_binary(app: &AppHandle, kind: &str) -> Result<PathBuf, String> {
@@ -751,7 +752,7 @@ pub fn stage_bundled_runtime_binary(app: &AppHandle, kind: &str) -> Result<PathB
 
     // Windows 上不存在 macOS 的代码签名 inode 缓存问题，直接使用安装目录内的运行时
     if cfg!(windows) {
-        return Ok(source);
+        return Ok(normalize_windows_user_path(source));
     }
 
     let data_dir = app
@@ -798,7 +799,7 @@ pub fn stage_bundled_runtime_binary(app: &AppHandle, kind: &str) -> Result<PathB
             .map_err(|error| format!("Failed to update staged {kind} permissions: {error}"))?;
     }
 
-    Ok(destination)
+    Ok(normalize_windows_user_path(destination))
 }
 
 pub fn resolve_node_binary(app: &AppHandle) -> PathBuf {
@@ -857,7 +858,7 @@ pub fn resolve_gemini_launch(app: &AppHandle, requested: Option<&str>) -> CliLau
     if desired != DEFAULT_GEMINI_BINARY {
         let program = normalize_requested_binary_path(PathBuf::from(desired));
         return CliLaunch {
-            display: program.display().to_string(),
+            display: path_display_text(&program),
             program,
             args: Vec::new(),
         };
@@ -867,15 +868,15 @@ pub fn resolve_gemini_launch(app: &AppHandle, requested: Option<&str>) -> CliLau
     if let Some(entry) = bundled_runtime_source_path(app, &bundled_entry) {
         let node_binary = resolve_node_binary(app);
         return CliLaunch {
-            display: format!("{} {}", node_binary.display(), entry.display()),
+            display: format!("{} {}", path_display_text(&node_binary), path_display_text(&entry)),
             program: node_binary,
-            args: vec![entry.display().to_string()],
+            args: vec![path_display_text(&entry)],
         };
     }
 
     if let Ok(binary) = stage_bundled_runtime_binary(app, "gemini") {
         return CliLaunch {
-            display: binary.display().to_string(),
+            display: path_display_text(&binary),
             program: binary,
             args: Vec::new(),
         };
@@ -1172,12 +1173,82 @@ pub fn shell_single_quote(value: &str) -> String {
 
 #[cfg(target_os = "windows")]
 pub fn terminal_quote(value: &str) -> String {
-    format!("\"{}\"", value.replace('"', "\"\""))
+    windows_shell_quote(value)
 }
 
 #[cfg(not(target_os = "windows"))]
 pub fn terminal_quote(value: &str) -> String {
     shell_single_quote(value)
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_shell_quote(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', "\"\""))
+}
+
+#[cfg(any(target_os = "windows", test))]
+pub fn windows_user_path_text(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{}", rest);
+    }
+
+    if let Some(rest) = path.strip_prefix(r"\\?\") {
+        let bytes = rest.as_bytes();
+        if bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && matches!(bytes[2], b'\\' | b'/')
+        {
+            return rest.to_string();
+        }
+    }
+
+    path.to_string()
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_shell_command_text(
+    binary: &Path,
+    leading_args: &[String],
+    trailing_args: &[String],
+) -> String {
+    let binary_text = windows_user_path_text(&binary.display().to_string());
+    let mut parts = Vec::with_capacity(3 + leading_args.len() + trailing_args.len());
+    parts.push("call".to_string());
+    parts.push(windows_shell_quote(&binary_text));
+    parts.extend(leading_args.iter().map(|value| windows_shell_quote(value)));
+    parts.extend(trailing_args.iter().map(|value| windows_shell_quote(value)));
+    parts.join(" ")
+}
+
+#[cfg(target_os = "windows")]
+pub fn normalize_windows_user_path(path: PathBuf) -> PathBuf {
+    let text = path.display().to_string();
+    let normalized = windows_user_path_text(&text);
+    if normalized == text {
+        path
+    } else {
+        PathBuf::from(normalized)
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn normalize_windows_user_path(path: PathBuf) -> PathBuf {
+    path
+}
+
+pub fn path_display_text(path: &Path) -> String {
+    let text = path.display().to_string();
+
+    #[cfg(target_os = "windows")]
+    {
+        windows_user_path_text(&text)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        text
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -1189,24 +1260,20 @@ pub fn terminal_env_assignment(key: &str, value: &str) -> String {
 }
 
 pub fn shell_command_text(binary: &Path, leading_args: &[String], trailing_args: &[String]) -> String {
-    let mut parts = Vec::with_capacity(2 + leading_args.len() + trailing_args.len());
-
     #[cfg(target_os = "windows")]
     {
-        let needs_call = binary
-            .extension()
-            .and_then(|value| value.to_str())
-            .map(|value| value.eq_ignore_ascii_case("cmd") || value.eq_ignore_ascii_case("bat"))
-            .unwrap_or(false);
-        if needs_call {
-            parts.push("call".to_string());
-        }
+        return windows_shell_command_text(binary, leading_args, trailing_args);
     }
 
-    parts.push(terminal_quote(&binary.display().to_string()));
-    parts.extend(leading_args.iter().map(|value| terminal_quote(value)));
-    parts.extend(trailing_args.iter().map(|value| terminal_quote(value)));
-    parts.join(" ")
+    #[cfg(not(target_os = "windows"))]
+    {
+        let mut parts = Vec::with_capacity(2 + leading_args.len() + trailing_args.len());
+
+        parts.push(terminal_quote(&path_display_text(binary)));
+        parts.extend(leading_args.iter().map(|value| terminal_quote(value)));
+        parts.extend(trailing_args.iter().map(|value| terminal_quote(value)));
+        parts.join(" ")
+    }
 }
 
 pub fn emit_cli_stream_line(
@@ -1404,7 +1471,8 @@ pub fn open_terminal_command(command_text: &str, success_message: &str) -> Resul
         let mut command = Command::new("cmd.exe");
         command.creation_flags(CREATE_NEW_CONSOLE);
         command
-            .args(["/D", "/K", command_text])
+            .args(["/D", "/K"])
+            .raw_arg(command_text)
             .spawn()
             .map_err(|error| format!("Failed to open terminal: {error}"))?;
         return Ok(success_message.to_string());
@@ -1418,5 +1486,58 @@ pub fn open_terminal_command(command_text: &str, success_message: &str) -> Resul
             .spawn()
             .map_err(|error| format!("Failed to open terminal: {error}"))?;
         return Ok(success_message.to_string());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn windows_user_path_text_strips_drive_verbatim_prefix() {
+        assert_eq!(
+            windows_user_path_text(
+                r"\\?\D:\桌面\高考应援\明信片\DesignCode\resources\runtime\windows-x64\codex\codex.exe"
+            ),
+            r"D:\桌面\高考应援\明信片\DesignCode\resources\runtime\windows-x64\codex\codex.exe"
+        );
+    }
+
+    #[test]
+    fn windows_user_path_text_converts_unc_verbatim_prefix() {
+        assert_eq!(
+            windows_user_path_text(r"\\?\UNC\server\share\codex.exe"),
+            r"\\server\share\codex.exe"
+        );
+    }
+
+    #[test]
+    fn windows_user_path_text_leaves_normal_and_unsupported_paths_unchanged() {
+        assert_eq!(
+            windows_user_path_text(r"D:\DesignCode\codex.exe"),
+            r"D:\DesignCode\codex.exe"
+        );
+        assert_eq!(
+            windows_user_path_text(r"\\?\Volume{abc}\codex.exe"),
+            r"\\?\Volume{abc}\codex.exe"
+        );
+    }
+
+    #[test]
+    fn windows_shell_command_text_prefixes_call_and_keeps_quotes_literal() {
+        let command = windows_shell_command_text(
+            Path::new(
+                r"\\?\D:\桌面\高考应援\明信片\DesignCode\resources\runtime\windows-x64\codex\codex.exe",
+            ),
+            &[],
+            &["login".to_string()],
+        );
+
+        assert_eq!(
+            command,
+            r#"call "D:\桌面\高考应援\明信片\DesignCode\resources\runtime\windows-x64\codex\codex.exe" "login""#
+        );
+        assert!(!command.contains(r"\\?\"));
+        assert!(!command.contains(r#"\""#));
     }
 }

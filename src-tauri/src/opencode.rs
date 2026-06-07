@@ -1372,9 +1372,9 @@ pub async fn snapshot_opencode(
         version,
         running,
         managed,
-        binary: resolved_binary.display().to_string(),
+        binary: path_display_text(&resolved_binary),
         port,
-        project_dir: root.display().to_string(),
+        project_dir: path_display_text(&root),
         session_id,
     })
 }

@@ -28,6 +28,9 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::time::sleep;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
 // ---------------------------------------------------------------------------
 // 设计工作流 — 负责 prepare → 调度后端 → sync 的完整流程
 // ---------------------------------------------------------------------------
@@ -938,7 +941,7 @@ async fn desktop_context(
         opencode_version: opencode.version,
         opencode_running: opencode.running,
         opencode_port: opencode.port,
-        project_dir: root.display().to_string(),
+        project_dir: path_display_text(&root),
         current_session_id: opencode.session_id,
     })
 }
@@ -1153,7 +1156,7 @@ async fn opencode_start(
 
     if opencode_health(desired_port).await {
         with_opencode_state(state.inner(), run_id.as_str(), |opencode| {
-            opencode.binary = desired_binary.display().to_string();
+            opencode.binary = path_display_text(&desired_binary);
             opencode.port = desired_port;
             opencode.managed = false;
         })?;
@@ -1205,7 +1208,7 @@ async fn opencode_start(
     with_opencode_state(state.inner(), run_id.as_str(), |opencode| {
         opencode.child = Some(child);
         opencode.port = desired_port;
-        opencode.binary = desired_binary.display().to_string();
+        opencode.binary = path_display_text(&desired_binary);
         opencode.managed = true;
     })?;
 
@@ -1874,7 +1877,7 @@ fn workspace_shell_exec(directory: String, command: String) -> Result<Value, Str
     let mut process = {
         let mut process = Command::new("cmd");
         configure_background_command(&mut process);
-        process.args(["/C", command.as_str()]);
+        process.args(["/D", "/C"]).raw_arg(command.as_str());
         process
     };
 
@@ -2552,7 +2555,7 @@ fn reveal_download_folder(file_name: Option<String>) -> Result<(), String> {
         let mut command = Command::new("explorer.exe");
         configure_background_command(&mut command);
         if let Some(path) = target_file {
-            command.arg(format!("/select,{}", path.display()));
+            command.arg(format!("/select,{}", path_display_text(&path)));
         } else {
             command.arg(&downloads);
         }

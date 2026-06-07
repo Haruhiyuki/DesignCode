@@ -53,6 +53,26 @@ const installerName = path.basename(installerPath);
 
 console.log(`Installer: ${installerPath}`);
 
+function spawnTauriSigner(tauriBin, targetPath, env) {
+  const signerArgs = ["signer", "sign", targetPath];
+
+  if (process.platform === "win32" && tauriBin.toLowerCase().endsWith(".cmd")) {
+    return spawnSync(process.env.ComSpec || "cmd.exe", ["/D", "/C", "call", tauriBin, ...signerArgs], {
+      encoding: "utf8",
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true
+    });
+  }
+
+  return spawnSync(tauriBin, signerArgs, {
+    encoding: "utf8",
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true
+  });
+}
+
 // ---------------------------------------------------------------------------
 // 签名
 // ---------------------------------------------------------------------------
@@ -64,16 +84,15 @@ if (tauriPrivateKey) {
 
   const tauriBin = path.join(rootDir, "node_modules", ".bin", process.platform === "win32" ? "tauri.cmd" : "tauri");
 
-  const signResult = spawnSync(tauriBin, ["signer", "sign", installerPath], {
-    encoding: "utf8",
-    shell: true,
-    env: {
+  const signResult = spawnTauriSigner(
+    tauriBin,
+    installerPath,
+    {
       ...process.env,
       TAURI_SIGNING_PRIVATE_KEY: tauriPrivateKey,
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: tauriPrivateKeyPassword || ""
-    },
-    stdio: ["ignore", "pipe", "pipe"]
-  });
+    }
+  );
 
   if (signResult.status !== 0) {
     console.error("Signer failed:", (signResult.stderr || "").trim());

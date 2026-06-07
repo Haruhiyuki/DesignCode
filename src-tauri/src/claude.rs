@@ -85,7 +85,7 @@ pub fn claude_status_snapshot(app: &AppHandle, requested_binary: Option<&str>) -
     Ok(CliRuntimeStatus {
         installed,
         version,
-        binary: binary.display().to_string(),
+        binary: path_display_text(&binary),
         logged_in,
         login_status,
         auth_method,
@@ -422,7 +422,7 @@ pub fn spawn_claude_stream_client(
     proxy: Option<&str>,
 ) -> Result<Arc<ClaudeStreamClient>, String> {
     let binary = resolve_claude_binary(app, requested_binary);
-    let binary_display = binary.display().to_string();
+    let binary_display = path_display_text(&binary);
     let model_text = model.map(str::trim).filter(|value| !value.is_empty()).map(ToOwned::to_owned);
     let effort_text = effort.map(str::trim).filter(|value| !value.is_empty()).map(ToOwned::to_owned);
     let proxy_text = proxy.map(str::trim).filter(|value| !value.is_empty()).map(ToOwned::to_owned);
@@ -658,7 +658,7 @@ pub fn claude_stream_client_matches(
         return false;
     }
 
-    let desired_binary = resolve_claude_binary(app, requested_binary).display().to_string();
+    let desired_binary = path_display_text(&resolve_claude_binary(app, requested_binary));
     let desired_proxy = proxy.map(str::trim).filter(|value| !value.is_empty()).map(ToOwned::to_owned);
     let desired_model = model.map(str::trim).filter(|value| !value.is_empty()).map(ToOwned::to_owned);
     let desired_effort = effort.map(str::trim).filter(|value| !value.is_empty()).map(ToOwned::to_owned);

@@ -537,7 +537,7 @@ pub fn current_gemini_stream_id(client: &GeminiAcpRun) -> Option<String> {
 
 pub fn gemini_launch_signature(launch: &CliLaunch) -> String {
     let mut parts = Vec::<String>::with_capacity(1 + launch.args.len());
-    parts.push(launch.program.display().to_string());
+    parts.push(path_display_text(&launch.program));
     parts.extend(launch.args.iter().cloned());
     parts.join("\u{1f}")
 }

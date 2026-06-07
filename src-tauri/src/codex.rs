@@ -1113,9 +1113,7 @@ pub fn ensure_codex_app_server_client(
     requested_binary: Option<&str>,
     proxy: Option<&str>,
 ) -> Result<Arc<CodexAppServerClient>, String> {
-    let desired_binary = resolve_codex_binary(app, requested_binary)
-        .display()
-        .to_string();
+    let desired_binary = path_display_text(&resolve_codex_binary(app, requested_binary));
     let desired_proxy = proxy
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -1609,7 +1607,7 @@ pub fn codex_status_snapshot(app: &AppHandle, requested_binary: Option<&str>) ->
     Ok(CodexStatus {
         installed,
         version,
-        binary: binary.display().to_string(),
+        binary: path_display_text(&binary),
         logged_in,
         login_status,
         auth_method,
