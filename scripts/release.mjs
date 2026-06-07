@@ -220,11 +220,12 @@ run("git add -A");
 run(`git commit -m "${tagName}"`);
 
 info(`打注解 tag ${tagName}（注解内容 = 更新日志）`);
-// 用 -F 把文件内容作为 tag 注释；GHA 读 tag annotation 作为 Release Notes
+// 用 -F 把文件内容作为 tag 注释；GHA 读 tag annotation 作为 Release Notes。
+// git tag 默认 cleanup 会把 Markdown 标题当作 #comment 删掉，所以必须保留原文。
 if (!dryRun) {
   const result = spawnSync(
     "git",
-    ["tag", "-a", tagName, "-F", archivedNotesPath],
+    ["tag", "-a", tagName, "--cleanup=verbatim", "-F", archivedNotesPath],
     { cwd: rootDir, stdio: "inherit" }
   );
   if (result.status !== 0) {
