@@ -25,6 +25,7 @@ import { useDesignExport } from "../composables/useDesignExport.js";
 import { useRuntimeAgent } from "../composables/useRuntimeAgent.js";
 import { useViewportScale } from "../composables/useViewportScale.js";
 import { useTabs } from "../composables/useTabs.js";
+import { useGuidedSetup } from "../composables/useGuidedSetup.js";
 import ToolRail from "./ToolRail.vue";
 import ComposerPanel from "./ComposerPanel.vue";
 import StylePreviewOverlay from "./overlays/StylePreviewOverlay.vue";
@@ -39,6 +40,8 @@ import HistoryDrawer from "./drawers/HistoryDrawer.vue";
 import AssetsDrawer from "./drawers/AssetsDrawer.vue";
 import SetupDrawer from "./drawers/SetupDrawer.vue";
 import RuntimeDrawer from "./drawers/RuntimeDrawer.vue";
+import GuidedSetupCta from "./guided/GuidedSetupCta.vue";
+import GuidedSetupModal from "./guided/GuidedSetupModal.vue";
 
 const {
   state, viewport, fullscreenEditor, ui, interaction,
@@ -53,6 +56,7 @@ const {
 } = useWorkspaceState();
 const { confirmDialog, requestConfirmation, settleConfirmation } = useConfirmDialog();
 const { updateState, doCheckForUpdates, doInstallUpdate, doRelaunch, openUpdateUrl } = useAppUpdate();
+const { guidedSetup } = useGuidedSetup();
 const {
   RUNTIME_PROXY_PORT_STORAGE_KEY, A4_VIEWPORT_RATIO,
   EXPORT_QUALITY_OPTIONS, STYLE_GUIDE_SECTIONS,
@@ -609,6 +613,7 @@ onBeforeUnmount(() => {
                     </div>
                   </div>
                 </div>
+                <GuidedSetupCta v-if="!hasDesign" class="guided-setup-floating-cta" />
                 <div v-if="canvasLoadingVisible" class="canvas-loading-overlay" aria-live="polite" aria-busy="true">
                   <div class="canvas-loading-card">
                     <span class="canvas-loading-spinner" aria-hidden="true"></span>
@@ -676,5 +681,7 @@ onBeforeUnmount(() => {
     <FullscreenEditor v-if="ui.canvasFullscreen" />
 
     <StylePreviewOverlay v-if="stylePreviewStyle" />
+
+    <GuidedSetupModal v-if="guidedSetup.open" />
   </div>
 </template>
