@@ -3,7 +3,6 @@
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::process::{Child, ChildStdin};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::mpsc;
@@ -27,7 +26,6 @@ pub struct RuntimeState {
     pub opencode: Mutex<HashMap<String, OpencodeState>>,
     pub codex: Mutex<HashMap<String, CodexAppServerState>>,
     pub claude: Mutex<HashMap<String, ClaudeStreamState>>,
-    pub gemini: Mutex<GeminiAcpState>,
     // 多 tab OpenCode 端口池：每个 tab 启动 OpenCode 时从 OPENCODE_BASE_PORT 起分配；
     // 关闭 tab / 子进程时释放回池。
     pub port_pool: Mutex<HashSet<u16>>,
@@ -61,14 +59,6 @@ pub struct CodexAppServerState {
 }
 
 #[derive(Default)]
-pub struct GeminiAcpState {
-    pub next_run_id: u64,
-    pub active_runs: HashMap<String, Arc<GeminiAcpRun>>,
-    pub pending_approvals: HashMap<String, GeminiPendingApproval>,
-    pub client: Option<Arc<GeminiAcpRun>>,
-}
-
-#[derive(Default)]
 pub struct ClaudeStreamState {
     pub client: Option<Arc<ClaudeStreamClient>>,
 }
@@ -85,22 +75,6 @@ pub struct CodexAppServerClient {
     pub pending_approvals: Arc<Mutex<HashMap<String, CodexPendingApproval>>>,
     pub active_turns: Arc<Mutex<HashMap<String, CodexActiveTurn>>>,
     pub thread_streams: Arc<Mutex<HashMap<String, String>>>,
-}
-
-pub struct GeminiAcpRun {
-    pub child: Mutex<Child>,
-    pub stdin: Mutex<ChildStdin>,
-    pub session_id: Arc<Mutex<Option<String>>>,
-    pub last_message: Arc<Mutex<String>>,
-    pub fatal_error: Arc<Mutex<Option<String>>>,
-    pub pending_turn: Arc<Mutex<Option<GeminiPendingTurn>>>,
-    pub exited: Arc<AtomicBool>,
-    pub exit_detail: Arc<Mutex<Option<String>>>,
-    pub directory: String,
-    pub binary: String,
-    pub proxy: Option<String>,
-    pub resume_session: Option<String>,
-    pub ready_waiter: Arc<Mutex<Option<mpsc::Sender<Result<Option<String>, String>>>>>,
 }
 
 pub struct ClaudeStreamClient {
@@ -137,19 +111,6 @@ pub struct CodexPendingApproval {
     pub method: String,
     pub params: Value,
     pub block: Value,
-}
-
-#[derive(Clone)]
-pub struct GeminiPendingApproval {
-    pub approval_id: String,
-    pub run_id: Option<String>,
-    pub block: Value,
-}
-
-pub struct GeminiPendingTurn {
-    pub prompt_id: String,
-    pub stream_id: Option<String>,
-    pub waiter: mpsc::Sender<Result<(Option<String>, String), String>>,
 }
 
 pub struct CodexActiveTurn {
@@ -237,14 +198,6 @@ pub struct CodexModel {
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GeminiModel {
-    pub id: String,
-    pub name: String,
-    pub description: Option<String>,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ClaudeModel {
     pub id: String,
     pub name: String,
@@ -273,13 +226,6 @@ pub struct CliRuntimeStatus {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GeminiModelsResult {
-    pub available_models: Vec<GeminiModel>,
-    pub current_model_id: Option<String>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ClaudeModelsResult {
     pub available_models: Vec<ClaudeModel>,
     pub available_efforts: Vec<String>,
@@ -298,19 +244,6 @@ pub struct CliStreamEvent {
     // 早期发射点尚未填充时为空字符串，前端按 stream_id 兜底匹配。
     #[serde(default)]
     pub run_id: String,
-}
-
-pub struct CliLaunch {
-    pub program: PathBuf,
-    pub args: Vec<String>,
-    pub display: String,
-}
-
-#[derive(Default)]
-pub struct GeminiAuthSnapshot {
-    pub selected_type: Option<String>,
-    pub active_google_account: Option<String>,
-    pub has_oauth_creds: bool,
 }
 
 #[derive(Serialize)]

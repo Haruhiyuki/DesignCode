@@ -26,14 +26,12 @@ pub const DEFAULT_NODE_BINARY: &str = "node";
 pub const DEFAULT_OPENCODE_BINARY: &str = "opencode";
 pub const DEFAULT_CODEX_BINARY: &str = "codex";
 pub const DEFAULT_CLAUDE_BINARY: &str = "claude";
-pub const DEFAULT_GEMINI_BINARY: &str = "gemini";
 pub const CLI_VERIFY_TIMEOUT: Duration = Duration::from_secs(20);
 pub const CLI_VERSION_TIMEOUT: Duration = Duration::from_secs(5);
 pub const CLI_STREAM_EVENT: &str = "designcode://cli-output";
 pub const MENU_ACTION_EVENT: &str = "designcode://menu-action";
 pub const CODEX_APP_SERVER_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 pub const CODEX_TURN_TIMEOUT: Duration = Duration::from_secs(1800);
-pub const GEMINI_ACP_READY_TIMEOUT: Duration = Duration::from_secs(45);
 pub const OPENCODE_READY_TIMEOUT: Duration = Duration::from_secs(60);
 
 // ---------------------------------------------------------------------------
@@ -45,8 +43,8 @@ pub fn trim_output(bytes: &[u8]) -> String {
 }
 
 // Windows 上 spawn 任何 .exe 都会付出 ~300ms–1.5s 的 Defender 扫描 + 进程初始化开销。
-// refreshDesktopIntegration 一次调用会叠加 5 次 --version（node / opencode / claude /
-// codex / gemini），bootstrap 完成前还会被 warmup 再补一轮。bundled 二进制在 app 生
+// refreshDesktopIntegration 一次调用会叠加 4 次 --version（node / opencode / claude /
+// codex），bootstrap 完成前还会被 warmup 再补一轮。bundled 二进制在 app 生
 // 命周期内是不变的，把成功的版本号缓存起来可以彻底消除这些冗余 spawn。
 // TTL 5 分钟是为了给用户通过命令行自升级外部 CLI 一条兜底路径。
 const VERSION_CACHE_TTL: Duration = Duration::from_secs(300);
@@ -92,40 +90,6 @@ pub fn command_version<S: AsRef<OsStr>>(binary: S, flag: &str, cwd: &Path) -> Op
     let result = command
         .arg(flag)
         .current_dir(cwd)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()
-        .and_then(|child| wait_child_output_with_timeout(child, CLI_VERSION_TIMEOUT).ok())
-        .filter(|output| output.status.success())
-        .map(|output| trim_output(&output.stdout))
-        .filter(|value| !value.is_empty());
-
-    version_cache_put(cache_key, result.clone());
-    result
-}
-
-pub fn command_version_with_args(
-    binary: &Path,
-    leading_args: &[String],
-    flag: &str,
-    cwd: &Path,
-) -> Option<String> {
-    let cache_key = format!(
-        "va1|{}|{}|{}",
-        binary.to_string_lossy(),
-        leading_args.join(" "),
-        flag
-    );
-    if let Some(cached) = version_cache_get(&cache_key) {
-        return cached;
-    }
-
-    let mut command = Command::new(binary);
-    configure_background_command(&mut command);
-    command.args(leading_args).arg(flag).current_dir(cwd);
-
-    let result = command
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
@@ -585,6 +549,84 @@ pub fn kill_pid(pid: u32, _signal: &str) -> Result<(), String> {
     }
 }
 
+// 递归杀掉某个进程的整棵子孙树（先 TERM 再 KILL）。被各 runtime 的进程清理共用：
+// opencode/codex/claude 在停止主进程前都要先收割 node MCP server、shell 工具等
+// grandchildren，否则它们会被 launchd 收养成残留。
+pub fn kill_child_descendants(pid: u32) {
+    #[cfg(unix)]
+    {
+        fn child_process_ids(parent_pid: u32) -> Vec<u32> {
+            let output = match Command::new("pgrep")
+                .arg("-P")
+                .arg(parent_pid.to_string())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .output()
+            {
+                Ok(result) => result,
+                Err(_) => return Vec::new(),
+            };
+
+            if !output.status.success() {
+                return Vec::new();
+            }
+
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter_map(|line| line.trim().parse::<u32>().ok())
+                .collect()
+        }
+
+        fn descendant_process_ids(root_pid: u32) -> Vec<u32> {
+            let mut pending = vec![root_pid];
+            let mut descendants = Vec::new();
+
+            while let Some(current_pid) = pending.pop() {
+                let children = child_process_ids(current_pid);
+                for child_pid in children {
+                    descendants.push(child_pid);
+                    pending.push(child_pid);
+                }
+            }
+
+            descendants
+        }
+
+        let descendants = descendant_process_ids(pid);
+        for child_pid in descendants.iter().rev() {
+            let _ = Command::new("kill")
+                .arg("-TERM")
+                .arg(child_pid.to_string())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+        std::thread::sleep(Duration::from_millis(120));
+        for child_pid in descendants.iter().rev() {
+            let _ = Command::new("kill")
+                .arg("-KILL")
+                .arg(child_pid.to_string())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        let mut command = Command::new("taskkill");
+        configure_background_command(&mut command);
+        let _ = command
+            .arg("/PID")
+            .arg(pid.to_string())
+            .arg("/T")
+            .arg("/F")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
 #[cfg(any(unix, target_os = "windows"))]
 pub fn kill_opencode_listeners(ports: &[u16]) -> Result<Vec<u32>, String> {
     let mut candidate_pids = BTreeSet::new();
@@ -606,7 +648,7 @@ pub fn kill_opencode_listeners(ports: &[u16]) -> Result<Vec<u32>, String> {
 
         // opencode 进程树里还挂着 node 子进程（MCP servers、shell 工具等），
         // 先递归清理子孙再杀主进程，避免 grandchildren 被 launchd 收养成残留
-        crate::gemini::kill_child_descendants(pid);
+        kill_child_descendants(pid);
         let _ = kill_pid(pid, "-TERM");
         killed.push(pid);
     }
@@ -663,13 +705,6 @@ pub fn bundled_runtime_relative_path(kind: &str) -> PathBuf {
         .join(runtime_binary_name(kind))
 }
 
-pub fn bundled_runtime_relative_support_path(kind: &str, relative: &str) -> PathBuf {
-    PathBuf::from("runtime")
-        .join(runtime_key())
-        .join(kind)
-        .join(relative)
-}
-
 pub fn bundled_runtime_source_candidates(app: &AppHandle, relative: &Path) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
@@ -683,13 +718,6 @@ pub fn bundled_runtime_source_candidates(app: &AppHandle, relative: &Path) -> Ve
     }
 
     candidates
-}
-
-pub fn bundled_runtime_source_path(app: &AppHandle, relative: &Path) -> Option<PathBuf> {
-    bundled_runtime_source_candidates(app, relative)
-        .into_iter()
-        .find(|candidate| candidate.exists())
-        .map(normalize_windows_user_path)
 }
 
 #[cfg(target_os = "windows")]
@@ -849,57 +877,6 @@ pub fn resolve_claude_binary(app: &AppHandle, requested: Option<&str>) -> PathBu
     normalize_requested_binary_path(PathBuf::from(desired))
 }
 
-pub fn resolve_gemini_launch(app: &AppHandle, requested: Option<&str>) -> CliLaunch {
-    let desired = requested
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(DEFAULT_GEMINI_BINARY);
-
-    if desired != DEFAULT_GEMINI_BINARY {
-        let program = normalize_requested_binary_path(PathBuf::from(desired));
-        return CliLaunch {
-            display: path_display_text(&program),
-            program,
-            args: Vec::new(),
-        };
-    }
-
-    let bundled_entry = bundled_runtime_relative_support_path("gemini", "package/dist/index.js");
-    if let Some(entry) = bundled_runtime_source_path(app, &bundled_entry) {
-        let node_binary = resolve_node_binary(app);
-        return CliLaunch {
-            display: format!("{} {}", path_display_text(&node_binary), path_display_text(&entry)),
-            program: node_binary,
-            args: vec![path_display_text(&entry)],
-        };
-    }
-
-    if let Ok(binary) = stage_bundled_runtime_binary(app, "gemini") {
-        return CliLaunch {
-            display: path_display_text(&binary),
-            program: binary,
-            args: Vec::new(),
-        };
-    }
-
-    CliLaunch {
-        display: DEFAULT_GEMINI_BINARY.to_string(),
-        program: PathBuf::from(DEFAULT_GEMINI_BINARY),
-        args: Vec::new(),
-    }
-}
-
-pub fn resolve_gemini_acp_sdk_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let sdk_relative = bundled_runtime_relative_support_path(
-        "gemini",
-        "package/node_modules/@agentclientprotocol/sdk/dist/acp.js",
-    );
-
-    bundled_runtime_source_path(app, &sdk_relative).ok_or_else(|| {
-        "Unable to locate the bundled Gemini ACP SDK.".to_string()
-    })
-}
-
 pub fn resolve_project_root(app: &AppHandle) -> Result<PathBuf, String> {
     fn push_with_ancestors(candidates: &mut Vec<PathBuf>, path: PathBuf) {
         let mut current = Some(path);
@@ -1015,63 +992,6 @@ pub fn strip_cli_warning_lines(text: &str) -> String {
         .to_string()
 }
 
-pub fn sanitize_gemini_stderr_line(line: &str) -> Option<String> {
-    let trimmed = line.trim();
-    if trimmed.is_empty()
-        || trimmed == "Loaded cached credentials."
-        || trimmed.contains("[STARTUP] Phase 'cli_startup' was started but never ended.")
-        || trimmed.starts_with("Attempt ")
-        || trimmed.starts_with("GaxiosError:")
-        || trimmed.starts_with("at ")
-        || trimmed.starts_with("{")
-        || trimmed.starts_with("}")
-        || trimmed.starts_with("[")
-        || trimmed.starts_with("]")
-        || trimmed.starts_with("'")
-        || trimmed.starts_with("\"")
-        || trimmed.starts_with("[Symbol")
-        || trimmed == "},"
-        || trimmed == "],"
-        || trimmed == "}, {"
-    {
-        return None;
-    }
-
-    if trimmed.contains("MODEL_CAPACITY_EXHAUSTED")
-        || trimmed.contains("RESOURCE_EXHAUSTED")
-        || trimmed.contains("rateLimitExceeded")
-        || trimmed.contains("No capacity available for model")
-    {
-        return None;
-    }
-
-    if [
-        "config:",
-        "response:",
-        "headers:",
-        "request:",
-        "data:",
-        "proxy:",
-        "url:",
-        "method:",
-        "params:",
-        "body:",
-        "signal:",
-        "retry:",
-        "paramsSerializer:",
-        "validateStatus:",
-        "agent:",
-        "errorRedactor:",
-    ]
-    .iter()
-    .any(|prefix| trimmed.starts_with(prefix))
-    {
-        return None;
-    }
-
-    Some(trimmed.to_string())
-}
-
 pub fn merge_no_proxy() -> String {
     let existing_no_proxy = std::env::var("NO_PROXY").unwrap_or_default();
     let base_no_proxy = "127.0.0.1,localhost";
@@ -1147,22 +1067,6 @@ pub fn apply_proxy_env(command: &mut Command, proxy: Option<&str>) {
         command.env("all_proxy", &socks_proxy_url);
         command.env("NO_PROXY", &no_proxy);
         command.env("no_proxy", &no_proxy);
-    }
-}
-
-pub fn clear_gemini_auth_env(command: &mut Command) {
-    for key in [
-        "GEMINI_API_KEY",
-        "GOOGLE_API_KEY",
-        "GOOGLE_CLOUD_PROJECT",
-        "GOOGLE_CLOUD_PROJECT_ID",
-        "GOOGLE_CLOUD_LOCATION",
-        "GOOGLE_GENAI_USE_VERTEXAI",
-        "GOOGLE_GENAI_USE_GCA",
-        "CLOUD_SHELL",
-        "GEMINI_CLI_USE_COMPUTE_ADC",
-    ] {
-        command.env_remove(key);
     }
 }
 
@@ -1321,19 +1225,6 @@ pub fn json_rpc_id_string(value: &Value) -> Option<String> {
 // 散布的工具函数
 // ---------------------------------------------------------------------------
 
-pub fn read_json_string_at(value: &Value, path: &[&str]) -> Option<String> {
-    let mut current = value;
-    for key in path {
-        current = current.get(*key)?;
-    }
-
-    current
-        .as_str()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-}
-
 pub fn proxy_env_prefix(proxy: Option<&str>) -> String {
     #[cfg(target_os = "windows")]
     {
@@ -1435,13 +1326,6 @@ pub fn read_nested_string(value: &Value, path: &[&str]) -> Option<String> {
         current = current.get(*key)?;
     }
     current.as_str().map(ToOwned::to_owned)
-}
-
-pub fn read_package_version(package_root: &Path) -> Option<String> {
-    let manifest = fs::read_to_string(package_root.join("package.json")).ok()?;
-    serde_json::from_str::<Value>(&manifest)
-        .ok()
-        .and_then(|value| read_json_string_at(&value, &["version"]))
 }
 
 pub fn open_terminal_command(command_text: &str, success_message: &str) -> Result<String, String> {

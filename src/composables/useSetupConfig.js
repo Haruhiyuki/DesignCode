@@ -61,7 +61,6 @@ const rightPanelTabs = computed(() => [
 const RUNTIME_BACKEND_OPTIONS = computed(() => [
   { id: "codex", label: t("runtime.codexSubscription") },
   { id: "claude", label: "Claude Code" },
-  { id: "gemini", label: "Gemini CLI" },
   { id: "opencode", label: "OpenCode / API" }
 ]);
 
@@ -467,32 +466,9 @@ function runtimeBackendDisplayName(runtimeBackend) {
       return "Codex";
     case "claude":
       return "Claude Code";
-    case "gemini":
-      return "Gemini CLI";
     default:
       return "OpenCode";
   }
-}
-
-function normalizeGeminiModelValue(value) {
-  if (typeof value === "string") {
-    return value.trim();
-  }
-  if (value && typeof value === "object") {
-    for (const candidate of [
-      value.id,
-      value.modelId,
-      value.model_id,
-      value.name,
-      value.title,
-      value.value
-    ]) {
-      if (typeof candidate === "string" && candidate.trim()) {
-        return candidate.trim();
-      }
-    }
-  }
-  return "";
 }
 
 const conversationAgentOutputText = computed(() => {
@@ -577,10 +553,6 @@ const claudeInstallLabel = computed(() => {
   return state.agent.claudeInstalled ? state.agent.claudeVersion || t("runtime.installed") : t("runtime.notInstalled");
 });
 
-const geminiInstallLabel = computed(() => {
-  return state.agent.geminiInstalled ? state.agent.geminiVersion || t("runtime.installed") : t("runtime.notInstalled");
-});
-
 const opencodeSessionLabel = computed(() => {
   const sessionId = state.design.runtimeSessions.opencode || state.agent.sessionId;
   return sessionId ? sessionId.slice(0, 10) : t("runtime.sessionBound");
@@ -593,11 +565,6 @@ const codexSessionLabel = computed(() => {
 
 const claudeSessionLabel = computed(() => {
   const sessionId = state.design.runtimeSessions.claude || state.agent.claudeSessionId;
-  return sessionId ? sessionId.slice(0, 10) : t("runtime.sessionBound");
-});
-
-const geminiSessionLabel = computed(() => {
-  const sessionId = state.design.runtimeSessions.gemini || state.agent.geminiSessionId;
   return sessionId ? sessionId.slice(0, 10) : t("runtime.sessionBound");
 });
 
@@ -741,25 +708,6 @@ const claudeEffortOptions = computed(() => {
   return ["", ...efforts];
 });
 
-const geminiModelOptions = computed(() => {
-  const entries = Array.isArray(state.agent.geminiModels) ? [...state.agent.geminiModels] : [];
-  const known = new Set(entries.map((item) => item.id));
-  const defaultModel = normalizeGeminiModelValue(state.agent.geminiDefaultModel);
-
-  if (defaultModel && !known.has(defaultModel)) {
-    entries.unshift({
-      id: defaultModel,
-      name: defaultModel,
-      description: t("runtime.modelCurrentGemini")
-    });
-  }
-
-  return [
-    { id: "", name: t("runtime.modelAutoDefault"), description: null },
-    ...entries
-  ];
-});
-
 const codexReasoningOptions = computed(() => {
   const levels = Array.isArray(selectedCodexModel.value?.supportedReasoningLevels)
     ? [...selectedCodexModel.value.supportedReasoningLevels]
@@ -789,8 +737,6 @@ const activeRuntimeSessionId = computed(() => {
       return state.design.runtimeSessions.codex || state.agent.codexThreadId || null;
     case "claude":
       return state.design.runtimeSessions.claude || state.agent.claudeSessionId || null;
-    case "gemini":
-      return state.design.runtimeSessions.gemini || state.agent.geminiSessionId || null;
     default:
       return state.design.runtimeSessions.opencode || state.agent.sessionId || null;
   }
@@ -813,14 +759,6 @@ const activeModelLabel = computed(() => {
       return t("runtime.notSet");
     }
     return effort ? `${model} · ${effort}` : model;
-  }
-
-  if (activeRuntimeBackend.value === "gemini") {
-    return (
-      normalizeGeminiModelValue(state.agent.geminiModelId)
-      || normalizeGeminiModelValue(state.agent.geminiDefaultModel)
-      || t("runtime.notSet")
-    );
   }
 
   if (state.agent.configModel) {
@@ -851,14 +789,6 @@ const providerConnectionLabel = computed(() => {
     return state.agent.claudeLoggedIn ? t("runtime.claudeLocalLogin") : t("runtime.notLoggedIn");
   }
 
-  if (activeRuntimeBackend.value === "gemini") {
-    if (state.agent.geminiVerified) {
-      return t("runtime.verified");
-    }
-
-    return state.agent.geminiLoggedIn ? t("runtime.geminiAuthDetected") : t("runtime.geminiPendingVerify");
-  }
-
   if (!state.agent.connectedProviders.length) {
     return t("runtime.notConnected");
   }
@@ -885,8 +815,6 @@ const currentRuntimeSessionLabel = computed(() => {
       return codexSessionLabel.value;
     case "claude":
       return claudeSessionLabel.value;
-    case "gemini":
-      return geminiSessionLabel.value;
     default:
       return opencodeSessionLabel.value;
   }
@@ -905,10 +833,6 @@ const runtimeAgentEnabled = computed(() => {
     return state.agent.claudeInstalled && state.agent.claudeLoggedIn;
   }
 
-  if (activeRuntimeBackend.value === "gemini") {
-    return state.agent.geminiInstalled;
-  }
-
   return state.agent.running;
 });
 
@@ -923,10 +847,6 @@ const runtimeShellEnabled = computed(() => {
 
   if (activeRuntimeBackend.value === "claude") {
     return state.agent.claudeInstalled && state.agent.claudeLoggedIn;
-  }
-
-  if (activeRuntimeBackend.value === "gemini") {
-    return state.agent.geminiInstalled;
   }
 
   return state.agent.running;
@@ -1033,14 +953,6 @@ const agentOutputText = computed(() => {
     return state.agent.output || t("runtime.claudeReady");
   }
 
-  if (activeRuntimeBackend.value === "gemini") {
-    if (!state.agent.geminiInstalled) {
-      return t("runtime.geminiNotDetected");
-    }
-
-    return state.agent.output || t("runtime.geminiReady");
-  }
-
   if (!state.agent.installed) {
     return t("runtime.opencodeNotDetected");
   }
@@ -1090,17 +1002,6 @@ const authResultText = computed(() => {
       state.agent.claudeVerificationMessage
         ? t("runtime.auth.claudeVerifyResult", { message: state.agent.claudeVerificationMessage })
         : t("runtime.auth.claudeVerifyHint")
-    ]
-      .filter(Boolean)
-      .join("\n");
-  }
-
-  if (activeRuntimeBackend.value === "gemini") {
-    return [
-      state.agent.geminiLoginStatus || t("runtime.auth.geminiStatusDefault"),
-      state.agent.geminiVerificationMessage
-        ? t("runtime.auth.geminiVerifyResult", { message: state.agent.geminiVerificationMessage })
-        : t("runtime.auth.geminiVerifyHint")
     ]
       .filter(Boolean)
       .join("\n");
@@ -1173,17 +1074,13 @@ function syncActiveRuntimeSession() {
         ? state.agent.codexThreadId
         : runtimeBackend === "claude"
           ? state.agent.claudeSessionId
-          : runtimeBackend === "gemini"
-            ? state.agent.geminiSessionId
-            : state.agent.sessionId) ||
+          : state.agent.sessionId) ||
       null;
 
   if (runtimeBackend === "codex") {
     state.agent.codexThreadId = sessionId;
   } else if (runtimeBackend === "claude") {
     state.agent.claudeSessionId = sessionId;
-  } else if (runtimeBackend === "gemini") {
-    state.agent.geminiSessionId = sessionId;
   } else {
     state.agent.sessionId = sessionId;
   }
@@ -1389,14 +1286,12 @@ async function saveDesignConfigPayload(payload, options = {}) {
       state.design.runtimeSessions = {
         opencode: record.design.runtimeSessions?.opencode || record.design.sessionId || state.design.runtimeSessions.opencode,
         codex: record.design.runtimeSessions?.codex || state.design.runtimeSessions.codex,
-        claude: record.design.runtimeSessions?.claude || state.design.runtimeSessions.claude,
-        gemini: record.design.runtimeSessions?.gemini || state.design.runtimeSessions.gemini
+        claude: record.design.runtimeSessions?.claude || state.design.runtimeSessions.claude
       };
       state.design.workspaceDir = record.design?.workspaceDir || state.design.workspaceDir;
       state.agent.sessionId = state.design.runtimeSessions.opencode || state.agent.sessionId;
       state.agent.codexThreadId = state.design.runtimeSessions.codex || state.agent.codexThreadId;
       state.agent.claudeSessionId = state.design.runtimeSessions.claude || state.agent.claudeSessionId;
-      state.agent.geminiSessionId = state.design.runtimeSessions.gemini || state.agent.geminiSessionId;
       state.currentMeta = normalizeMeta(record.meta || state.currentMeta);
       state.warnings = record.warnings || state.warnings;
       state.assets.selectedIds = Array.isArray(record.design?.selectedAssetIds)
@@ -1663,7 +1558,6 @@ export function useSetupConfig() {
 
     // Runtime 标签
     runtimeBackendDisplayName,
-    normalizeGeminiModelValue,
     conversationAgentOutputText,
     workspaceStateLabel,
     workspaceHint,
@@ -1678,11 +1572,9 @@ export function useSetupConfig() {
     opencodeInstallLabel,
     codexInstallLabel,
     claudeInstallLabel,
-    geminiInstallLabel,
     opencodeSessionLabel,
     codexSessionLabel,
     claudeSessionLabel,
-    geminiSessionLabel,
     runtimeDirectory,
     activeRuntimeBackend,
     availableProviders,
@@ -1695,7 +1587,6 @@ export function useSetupConfig() {
     selectedCodexModel,
     claudeModelOptions,
     claudeEffortOptions,
-    geminiModelOptions,
     codexReasoningOptions,
     sandboxDirectoryLabel,
     activeRuntimeSessionId,

@@ -22,10 +22,6 @@ const runtimeReady = computed(() => {
     return state.agent.claudeInstalled && state.agent.claudeLoggedIn;
   }
 
-  if (activeRuntimeBackend.value === "gemini") {
-    return state.agent.geminiInstalled && state.agent.geminiLoggedIn;
-  }
-
   return state.agent.installed && state.agent.running && Boolean(state.agent.providerId && state.agent.modelId);
 });
 

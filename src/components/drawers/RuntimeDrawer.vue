@@ -10,10 +10,9 @@ const { state, activeDropdown } = useWorkspaceState();
 const {
   activeRuntimeBackend, RUNTIME_BACKEND_OPTIONS,
   runtimeBackendDisplayName, activeModelLabel, appliedProxyLabel,
-  codexSessionLabel, claudeSessionLabel, geminiSessionLabel,
+  codexSessionLabel, claudeSessionLabel,
   codexModelOptions, codexReasoningOptions,
   claudeModelOptions, claudeEffortOptions,
-  geminiModelOptions,
   agentOptions, providerConnectionLabel,
   apiProviderPickerOptions, selectedProviderModels, opencodeSmallModelOptions,
   authResultText
@@ -22,10 +21,8 @@ const {
   setRuntimeBackend, applyProxyPort,
   handleOpenCodexLogin, handleVerifyCodex, applyCodexModel,
   handleOpenClaudeLogin, handleVerifyClaude, applyClaudeModel,
-  handleOpenGeminiLogin, handleVerifyGemini, applyGeminiModel,
   handleStartOpencode, handleStopOpencode, handleCreateSession,
-  applySelectedModel, refreshDesktopIntegration,
-  resolvedGeminiModelLabel
+  applySelectedModel, refreshDesktopIntegration
 } = useRuntimeAgent();
 const { openDropdown, closeDropdown } = useCanvasViewport();
 </script>
@@ -361,108 +358,6 @@ const { openDropdown, closeDropdown } = useCanvasViewport();
                   @click="refreshDesktopIntegration({ skipProviderCatalog: true, skipSessionMessages: true })"
                 >
                   {{ t("runtime.claude.refreshStatus") }}
-                </button>
-              </div>
-            </div>
-
-            <div v-else-if="activeRuntimeBackend === 'gemini'" class="runtime-mode-panel">
-              <div class="runtime-mode-header">
-                <strong>Gemini CLI</strong>
-                <span>{{ t("runtime.gemini.description") }}</span>
-              </div>
-
-              <label class="field">
-                <span>{{ t("runtime.gemini.pathLabel") }}</span>
-                <input
-                  v-model="state.agent.geminiBinary"
-                  :disabled="!state.desktop.isDesktop || state.agent.busy"
-                  :placeholder="t('runtime.gemini.pathPlaceholder')"
-                />
-              </label>
-
-              <div class="field-row">
-                <label class="field">
-                  <span>{{ t("runtime.gemini.authStatus") }}</span>
-                  <div class="runtime-inline-value">{{ state.agent.geminiLoggedIn ? t("runtime.gemini.authDetected") : t("runtime.gemini.pendingVerify") }}</div>
-                </label>
-
-                <label class="field">
-                  <span>{{ t("runtime.gemini.authMethod") }}</span>
-                  <div class="runtime-inline-value">{{ state.agent.geminiAuthMethod || t("runtime.authNotRecognized") }}</div>
-                </label>
-              </div>
-
-              <div class="field-row">
-                <label class="field">
-                  <span>{{ t("runtime.gemini.session") }}</span>
-                  <div class="runtime-inline-value">{{ geminiSessionLabel }}</div>
-                </label>
-
-                <label class="field">
-                  <span>{{ t("runtime.gemini.defaultModel") }}</span>
-                  <div class="runtime-inline-value">{{ resolvedGeminiModelLabel(state.agent.geminiDefaultModel) }}</div>
-                </label>
-              </div>
-
-              <div class="field">
-                <span>{{ t("runtime.gemini.modelLabel") }}</span>
-                <div class="custom-select" :class="{ open: activeDropdown.id === 'select-gemini-model' }">
-                  <button
-                    type="button"
-                    class="custom-select-trigger"
-                    :disabled="!state.desktop.isDesktop || state.agent.busy"
-                    @click="openDropdown('select-gemini-model', $event.currentTarget)"
-                  >
-                    <span class="custom-select-value">{{ geminiModelOptions.find(m => m.id === state.agent.geminiModelId)?.name || state.agent.geminiModelId || '\u2014' }}</span>
-                    <span class="custom-select-arrow" aria-hidden="true"></span>
-                  </button>
-                  <div v-if="activeDropdown.id === 'select-gemini-model'" class="custom-select-dropdown" :style="{ minWidth: activeDropdown.rect?.width + 'px' }">
-                    <button
-                      v-for="option in geminiModelOptions"
-                      :key="option.id || 'default'"
-                      type="button"
-                      class="custom-select-option"
-                      :data-active="option.id === state.agent.geminiModelId"
-                      @click="state.agent.geminiModelId = option.id; closeDropdown()"
-                    >
-                      {{ option.name }}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <div class="action-row">
-                <button
-                  type="button"
-                  class="button button-solid"
-                  :disabled="!state.desktop.isDesktop || state.agent.busy || !state.agent.geminiInstalled"
-                  @click="handleOpenGeminiLogin"
-                >
-                  {{ t("runtime.gemini.login") }}
-                </button>
-                <button
-                  type="button"
-                  class="button button-ghost"
-                  :disabled="!state.desktop.isDesktop || state.agent.busy"
-                  @click="applyGeminiModel"
-                >
-                  {{ t("runtime.gemini.confirmModel") }}
-                </button>
-                <button
-                  type="button"
-                  class="button button-ghost"
-                  :disabled="!state.desktop.isDesktop || state.agent.busy || !state.agent.geminiInstalled"
-                  @click="handleVerifyGemini"
-                >
-                  {{ t("runtime.gemini.verifyConnection") }}
-                </button>
-                <button
-                  type="button"
-                  class="button button-ghost"
-                  :disabled="!state.desktop.isDesktop || state.agent.busy"
-                  @click="refreshDesktopIntegration({ skipProviderCatalog: true, skipSessionMessages: true })"
-                >
-                  {{ t("runtime.gemini.refreshStatus") }}
                 </button>
               </div>
             </div>

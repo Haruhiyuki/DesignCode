@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { chmod, copyFile, cp, mkdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -450,15 +450,6 @@ function resolveClaudeSource() {
   return null;
 }
 
-function resolveGeminiSource() {
-  const resolved = resolveExplicitCommandPath("GEMINI_BIN_PATH") || resolveCommandPath("gemini");
-  if (!resolved) {
-    throw new Error("Unable to resolve Gemini CLI on the build machine. Install `gemini` or set GEMINI_BIN_PATH.");
-  }
-
-  return resolved;
-}
-
 function readPackageJson(packageRoot) {
   try {
     return JSON.parse(readFileSync(path.join(packageRoot, "package.json"), "utf8"));
@@ -495,56 +486,6 @@ function findPackageRoot(startPath, packageName) {
   }
 }
 
-function resolveGeminiPackageRoot(sourcePath) {
-  const packageRoot = findPackageRoot(sourcePath, "@google/gemini-cli");
-  if (
-    packageRoot &&
-    path.basename(packageRoot) === "dist" &&
-    existsSync(path.join(path.dirname(packageRoot), "node_modules"))
-  ) {
-    return path.dirname(packageRoot);
-  }
-
-  if (packageRoot) {
-    return packageRoot;
-  }
-
-  let current;
-  try {
-    const absolute = realpathSync(sourcePath);
-    current = statSync(absolute).isDirectory() ? absolute : path.dirname(absolute);
-  } catch {
-    return null;
-  }
-
-  for (;;) {
-    const candidate = path.join(current, "node_modules", "@google", "gemini-cli");
-    if (existsSync(path.join(candidate, "package.json"))) {
-      return realpathSync(candidate);
-    }
-
-    const parent = path.dirname(current);
-    if (parent === current) {
-      return null;
-    }
-
-    current = parent;
-  }
-}
-
-function isStandaloneRuntime(sourcePath) {
-  if (!sourcePath) {
-    return false;
-  }
-
-  const normalized = sourcePath.toLowerCase();
-  if (platform === "windows") {
-    return normalized.endsWith(".exe");
-  }
-
-  return !normalized.endsWith(".js") && !normalized.endsWith(".mjs") && !normalized.endsWith(".cjs");
-}
-
 async function copyExecutable(sourcePath, destinationPath) {
   await mkdir(path.dirname(destinationPath), { recursive: true });
 
@@ -565,34 +506,6 @@ async function copyExecutable(sourcePath, destinationPath) {
 
   if (platform !== "windows") {
     await chmod(destinationPath, 0o755);
-  }
-
-  return shouldCopy;
-}
-
-async function copyDirectory(sourcePath, destinationPath) {
-  await mkdir(path.dirname(destinationPath), { recursive: true });
-
-  let shouldCopy = true;
-  try {
-    const [sourceMeta, destinationMeta] = await Promise.all([
-      stat(path.join(sourcePath, "package.json")),
-      stat(path.join(destinationPath, "package.json"))
-    ]);
-
-    shouldCopy =
-      Number(sourceMeta.mtimeMs) > Number(destinationMeta.mtimeMs) + 1000 ||
-      sourceMeta.size !== destinationMeta.size;
-  } catch {}
-
-  if (shouldCopy) {
-    await rm(destinationPath, { recursive: true, force: true });
-    await cp(sourcePath, destinationPath, {
-      recursive: true,
-      force: true,
-      errorOnExist: false,
-      preserveTimestamps: true
-    });
   }
 
   return shouldCopy;
@@ -688,8 +601,8 @@ function findNativeBinaries(dir) {
 }
 
 // 捡掉运行时用不到的纯开发产物：TS 定义、sourcemap、非 license 的 markdown 文档、
-// 测试/示例目录。打 DMG / NSIS 前统一清，macOS 尤其明显 —— gemini-cli 原装
-// node_modules 带了 ~140MB 这类垃圾。license/notice/copying 之类的法律必需品保留。
+// 测试/示例目录。打 DMG / NSIS 前统一清，macOS 尤其明显 —— 原装 node_modules 常带
+// 大量这类垃圾。license/notice/copying 之类的法律必需品保留。
 async function pruneRuntimeJunk(baseDir) {
   if (!existsSync(baseDir)) {
     return { files: 0, dirs: 0, bytes: 0 };
@@ -773,7 +686,7 @@ function signMacOSRuntimeBinaries(baseDir, identity) {
     return 0;
   }
 
-  // JIT entitlements 文件路径 — node / codex / gemini 等运行时需要 JIT 权限
+  // JIT entitlements 文件路径 — node / codex 等运行时需要 JIT 权限
   const entitlementsPath = path.join(rootDir, "src-tauri", "resources", "runtime-entitlements.plist");
   const hasEntitlements = existsSync(entitlementsPath);
   if (!hasEntitlements) {
@@ -814,42 +727,19 @@ async function main() {
   const opencodeSource = resolveOpencodeSource();
   const codexSource = resolveCodexSource();
   const claudeSource = resolveClaudeSource(); // null if not found — proprietary, not bundled
-  const geminiSource = resolveGeminiSource();
-  const geminiPackageRoot = resolveGeminiPackageRoot(geminiSource);
-  const bundleGeminiBinary = isStandaloneRuntime(geminiSource);
-  const bundleGeminiPackage = Boolean(geminiPackageRoot && !bundleGeminiBinary);
-
-  if (!bundleGeminiBinary && !bundleGeminiPackage) {
-    throw new Error(
-      "Unable to bundle Gemini CLI. Expected a standalone binary or an @google/gemini-cli package root."
-    );
-  }
 
   const nodeDestination = path.join(runtimeDir, "node", runtimeBinaryName("node"));
   const opencodeDestination = path.join(runtimeDir, "opencode", runtimeBinaryName("opencode"));
   const codexDestination = path.join(runtimeDir, "codex", runtimeBinaryName("codex"));
   const claudeDestination = claudeSource ? path.join(runtimeDir, "claude", runtimeBinaryName("claude")) : null;
-  const geminiDestination = path.join(runtimeDir, "gemini", runtimeBinaryName("gemini"));
-  const geminiPackageDestination = path.join(runtimeDir, "gemini", "package");
 
-  const [nodeCopied, opencodeCopied, codexCopied, claudeCopied, geminiCopied] = await Promise.all([
+  const [nodeCopied, opencodeCopied, codexCopied, claudeCopied] = await Promise.all([
     copyExecutable(nodeSource, nodeDestination),
     copyExecutable(opencodeSource, opencodeDestination),
     copyExecutable(codexSource, codexDestination),
     claudeSource && claudeDestination
       ? copyExecutable(claudeSource, claudeDestination)
-      : removeIfExists(path.join(runtimeDir, "claude")).then(() => false),
-    bundleGeminiBinary
-      ? Promise.all([
-          removeIfExists(geminiPackageDestination),
-          copyExecutable(geminiSource, geminiDestination)
-        ]).then(([, copied]) => copied)
-      : bundleGeminiPackage
-        ? Promise.all([
-            removeIfExists(geminiDestination),
-            copyDirectory(geminiPackageRoot, geminiPackageDestination)
-          ]).then(([, copied]) => copied)
-        : Promise.resolve(false)
+      : removeIfExists(path.join(runtimeDir, "claude")).then(() => false)
   ]);
 
   const manifest = {
@@ -880,21 +770,6 @@ async function main() {
       copied: claudeCopied,
       bundled: Boolean(claudeSource),
       note: claudeSource ? "" : "Proprietary — not bundled. Users must install Claude Code separately."
-    },
-    gemini: {
-      version: bundleGeminiPackage
-        ? readPackageJson(geminiPackageRoot)?.version || ""
-        : geminiSource
-          ? readBinaryVersion(geminiSource)
-          : "",
-      source: bundleGeminiPackage ? geminiPackageRoot : geminiSource,
-      destination: bundleGeminiBinary
-        ? geminiDestination
-        : bundleGeminiPackage
-          ? geminiPackageDestination
-          : null,
-      copied: geminiCopied,
-      bundledAs: bundleGeminiBinary ? "binary" : "node-package"
     }
   };
 
@@ -908,14 +783,6 @@ async function main() {
   console.log(`OpenCode: ${opencodeDestination}`);
   console.log(`Codex: ${codexDestination}`);
   console.log(`Claude: ${claudeDestination || "(not bundled — proprietary license, requires user install)"}`);
-
-  console.log(
-    `Gemini: ${
-      bundleGeminiBinary
-        ? geminiDestination
-        : `${geminiPackageDestination} (bundled node package)`
-    }`
-  );
 
   const pruned = await pruneRuntimeJunk(runtimeDir);
   console.log(

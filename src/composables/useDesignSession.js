@@ -59,7 +59,6 @@ const {
   activeRuntimeBackend, activeRuntimeSessionId,
   runtimeDirectory,
   runtimeBackendDisplayName,
-  normalizeGeminiModelValue,
   activeModelLabel,
   buildPromptBundleForInstruction,
   latestCommit,
@@ -80,7 +79,6 @@ const {
 
 let _resetZoom = null;
 let _hydrateFromMeta = null;
-let _normalizedGeminiBinary = null;
 let _nextCodexStreamId = null;
 let _beginCliStream = null;
 let _endCliStream = null;
@@ -99,7 +97,6 @@ let _sanitizeAgentConsoleMessage = null;
 function setDeps(deps) {
   if (deps.resetZoom) _resetZoom = deps.resetZoom;
   if (deps.hydrateFromMeta) _hydrateFromMeta = deps.hydrateFromMeta;
-  if (deps.normalizedGeminiBinary) _normalizedGeminiBinary = deps.normalizedGeminiBinary;
   if (deps.nextCodexStreamId) _nextCodexStreamId = deps.nextCodexStreamId;
   if (deps.beginCliStream) _beginCliStream = deps.beginCliStream;
   if (deps.endCliStream) _endCliStream = deps.endCliStream;
@@ -307,8 +304,7 @@ async function restoreVersion(index) {
       state.design.runtimeSessions = {
         opencode: record.design?.runtimeSessions?.opencode || record.design?.sessionId || state.design.runtimeSessions.opencode,
         codex: record.design?.runtimeSessions?.codex || state.design.runtimeSessions.codex,
-        claude: record.design?.runtimeSessions?.claude || state.design.runtimeSessions.claude,
-        gemini: record.design?.runtimeSessions?.gemini || state.design.runtimeSessions.gemini
+        claude: record.design?.runtimeSessions?.claude || state.design.runtimeSessions.claude
       };
       syncActiveRuntimeSession();
       _hydrateFromMeta(state.currentMeta);
@@ -365,8 +361,7 @@ function applyEditableHtmlResult(result) {
     state.design.runtimeSessions = {
       opencode: result.design.runtimeSessions?.opencode || result.design.sessionId || state.design.runtimeSessions.opencode,
       codex: result.design.runtimeSessions?.codex || state.design.runtimeSessions.codex,
-      claude: result.design.runtimeSessions?.claude || state.design.runtimeSessions.claude,
-      gemini: result.design.runtimeSessions?.gemini || state.design.runtimeSessions.gemini
+      claude: result.design.runtimeSessions?.claude || state.design.runtimeSessions.claude
     };
     state.design.workspaceDir = result.design.workspaceDir || state.design.workspaceDir;
     state.assets.selectedIds = Array.isArray(result.design.selectedAssetIds)
@@ -585,8 +580,7 @@ function clearCurrentDesignWorkspace() {
     state.design.runtimeSessions = {
       opencode: null,
       codex: null,
-      claude: null,
-      gemini: null
+      claude: null
     };
     state.design.workspaceDir = null;
     state.design.chat = [];
@@ -600,7 +594,6 @@ function clearCurrentDesignWorkspace() {
     state.agent.sessionId = null;
     state.agent.codexThreadId = null;
     state.agent.claudeSessionId = null;
-    state.agent.geminiSessionId = null;
     resetDesignConfiguration();
     syncActiveRuntimeSession();
   } finally {
@@ -625,14 +618,12 @@ function applyOpenedDesignRecord(record, options = {}) {
     state.design.runtimeSessions = {
       opencode: design.runtimeSessions?.opencode || design.sessionId || null,
       codex: design.runtimeSessions?.codex || null,
-      claude: design.runtimeSessions?.claude || null,
-      gemini: design.runtimeSessions?.gemini || null
+      claude: design.runtimeSessions?.claude || null
     };
     state.design.workspaceDir = design.workspaceDir || null;
     state.agent.sessionId = state.design.runtimeSessions.opencode || null;
     state.agent.codexThreadId = state.design.runtimeSessions.codex || null;
     state.agent.claudeSessionId = state.design.runtimeSessions.claude || null;
-    state.agent.geminiSessionId = state.design.runtimeSessions.gemini || null;
     state.design.chat = record.chat || [];
     state.agent.streamBlocks = [];
     syncVersionsFromCommits(record.commits || [], options.activeCommitHash);
@@ -855,18 +846,12 @@ function buildPayload(extra = {}) {
     ? state.agent.codexModelId || state.agent.codexDefaultModel || null
     : runtimeBackend === "claude"
       ? state.agent.claudeModelId || state.agent.claudeDefaultModel || null
-      : runtimeBackend === "gemini"
-        ? normalizeGeminiModelValue(state.agent.geminiModelId)
-          || normalizeGeminiModelValue(state.agent.geminiDefaultModel)
-          || null
-        : state.agent.configModel || null;
+      : state.agent.configModel || null;
   const runtimeBinary = runtimeBackend === "codex"
     ? (state.agent.codexBinary.trim() || "codex")
     : runtimeBackend === "claude"
       ? (state.agent.claudeBinary.trim() || "claude")
-      : runtimeBackend === "gemini"
-        ? _normalizedGeminiBinary()
-        : null;
+      : null;
 
   return {
     ...buildDesignConfigPayload(),
@@ -949,8 +934,7 @@ function applyDesignResult(result, label, options = {}) {
     state.design.runtimeSessions = {
       opencode: result.design.runtimeSessions?.opencode || result.design.sessionId || state.design.runtimeSessions.opencode,
       codex: result.design.runtimeSessions?.codex || state.design.runtimeSessions.codex,
-      claude: result.design.runtimeSessions?.claude || state.design.runtimeSessions.claude,
-      gemini: result.design.runtimeSessions?.gemini || state.design.runtimeSessions.gemini
+      claude: result.design.runtimeSessions?.claude || state.design.runtimeSessions.claude
     };
     state.design.workspaceDir = result.design.workspaceDir || state.design.workspaceDir;
     state.assets.selectedIds = Array.isArray(result.design.selectedAssetIds)
@@ -1281,7 +1265,7 @@ function submitConversation() {
 //   - 用户上一条提问**保留**在聊天记录里（不会因中止而被回滚）；
 //   - 中止时已流出的内容被固化为一条完整的 agent 消息 + 末尾「已停止」标记；
 //   - 用户再发新消息会在下面追加，**继承会话上下文**（Codex thread_id /
-//     Claude session_id / Gemini session_id / OpenCode session_id 都保留，
+//     Claude session_id / OpenCode session_id 都保留，
 //     下次 run_*_design 会自动 resume）。
 async function stopConversation() {
   const tabId = useTabs().activeTabId.value;

@@ -615,7 +615,7 @@ pub fn kill_claude_stream_client(client: &ClaudeStreamClient) {
     }
 
     // 先递归清理子进程树（含 SIGTERM→SIGKILL 回退），再强杀主进程
-    use crate::gemini::kill_child_descendants;
+    use crate::utils::kill_child_descendants;
     kill_child_descendants(client.pid);
 
     #[cfg(unix)]

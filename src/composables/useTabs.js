@@ -139,10 +139,7 @@ function seedStateFromPrimary(newStore, primaryStore) {
     "claudeInstalled", "claudeVersion", "claudeBinary", "claudeLoggedIn",
     "claudeLoginStatus", "claudeAuthMethod", "claudeDefaultModel",
     "claudeDefaultEffort", "claudeModels", "claudeEfforts", "claudeModelId",
-    "claudeEffort", "claudeVerified", "claudeVerificationMessage",
-    "geminiInstalled", "geminiVersion", "geminiBinary", "geminiLoggedIn",
-    "geminiLoginStatus", "geminiAuthMethod", "geminiDefaultModel",
-    "geminiModels", "geminiModelId", "geminiVerified", "geminiVerificationMessage"
+    "claudeEffort", "claudeVerified", "claudeVerificationMessage"
   ];
   for (const key of fields) {
     if (key in ps.agent) ns.agent[key] = ps.agent[key];

@@ -1,4 +1,4 @@
-// CLI stream 处理 — 监听 Codex/Claude/Gemini 的 stdout/stderr 事件，
+// CLI stream 处理 — 监听 Codex/Claude 的 stdout/stderr 事件，
 // 格式化日志、解析 JSON block、驱动对话面板的实时更新。
 import { listenCliOutput } from "../lib/desktop-api.js";
 import { t } from "../i18n/index.js";
@@ -26,7 +26,6 @@ const {
 // 切 tab 时旧 tab 的 stream 仍在后台运行并往 tab 自己的 store 写入。
 const tabStreamListeners = new Map(); // tabId -> { streamId, off, heartbeatTimer, startedAt, lastEventAt, lastHeartbeatAt, suppressed }
 let activeCodexSuppressedLines = new Set();
-let geminiStderrCapacityModel = "";
 
 // ---------------------------------------------------------------------------
 // 流 ID 和辅助
@@ -357,49 +356,6 @@ function formatClaudeJsonEvent(event) {
   return eventType ? `[claude] ${eventType}` : null;
 }
 
-function formatGeminiJsonEvent(event) {
-  const eventType = event.type || event.event || "";
-  if (
-    eventType === "designcode.session"
-    || eventType === "designcode.result"
-    || eventType === "designcode.models"
-  ) {
-    return null;
-  }
-
-  if (eventType === "designcode.phase") {
-    const phaseMessage = sanitizeAgentLogMessage(event.message || "");
-    return phaseMessage ? `[gemini] ${phaseMessage}` : null;
-  }
-
-  if (eventType === "designcode.error") {
-    const errorMessage = sanitizeAgentConsoleMessage(event.message || event.error || "");
-    return errorMessage ? `[error] ${errorMessage}` : t("chat.geminiError");
-  }
-
-  const message =
-    event.result ||
-    event.response ||
-    event.text ||
-    event.message?.text ||
-    event.content?.text ||
-    event.content ||
-    "";
-
-  if (message) {
-    const safeMessage = sanitizeAgentLogMessage(message);
-    if (!safeMessage) {
-      return null;
-    }
-    if (eventType === "result" || eventType === "final") {
-      return `[final]\n${safeMessage}`;
-    }
-    return `[gemini]\n${safeMessage}`;
-  }
-
-  return eventType ? `[gemini] ${eventType}` : null;
-}
-
 function formatOpencodeJsonEvent(event) {
   const eventType = event.type || "";
 
@@ -454,55 +410,6 @@ function formatOpencodeJsonEvent(event) {
   }
 
   return eventType ? `[opencode] ${eventType}` : null;
-}
-
-function sanitizeGeminiStderrLine(line) {
-  const text = String(line || "").trim();
-  if (!text) {
-    return null;
-  }
-  if (text === "Loaded cached credentials.") {
-    return null;
-  }
-  if (text.includes("[STARTUP] Phase 'cli_startup' was started but never ended.")) {
-    return null;
-  }
-  const capacityMatch = text.match(/No capacity available for model\s+([^\s"']+)/i)
-    || text.match(/"model"\s*:\s*"([^"]+)"/i);
-  if (capacityMatch?.[1]) {
-    const model = capacityMatch[1].trim();
-    if (geminiStderrCapacityModel === model) {
-      return null;
-    }
-    geminiStderrCapacityModel = model;
-    return null;
-  }
-  if (
-    /^Attempt \d+ failed with status 429\./.test(text)
-    || /No capacity available for model/i.test(text)
-    || /MODEL_CAPACITY_EXHAUSTED/i.test(text)
-    || /RESOURCE_EXHAUSTED/i.test(text)
-    || /rateLimitExceeded/i.test(text)
-  ) {
-    return null;
-  }
-  if (
-    text.startsWith("GaxiosError:")
-    || text.startsWith("at ")
-    || /^[{'"]/.test(text)
-    || /^(config|response|headers|request|data|proxy|url|method|params|body|signal|retry|paramsSerializer|validateStatus|agent|errorRedactor):/i.test(text)
-    || text.startsWith("[Symbol")
-    || text === "{"
-    || text === "}"
-    || text === "["
-    || text === "]"
-    || text === "},"
-    || text === "],"
-    || text === "}, {"
-  ) {
-    return null;
-  }
-  return text;
 }
 
 function formatCliBlockSummary(block, backend) {
@@ -579,10 +486,6 @@ function formatCliStreamPayload(payload) {
   }
 
   if (payload.channel === "stderr") {
-    if (payload.backend === "gemini") {
-      const safeLine = sanitizeGeminiStderrLine(rawLine);
-      return safeLine ? `[stderr] ${safeLine}` : null;
-    }
     return `[stderr] ${rawLine}`;
   }
 
@@ -612,8 +515,6 @@ function formatCliStreamPayload(payload) {
   switch (payload.backend) {
     case "claude":
       return formatClaudeJsonEvent(event);
-    case "gemini":
-      return formatGeminiJsonEvent(event);
     case "opencode":
       return formatOpencodeJsonEvent(event);
     default:
@@ -824,10 +725,9 @@ async function beginCliStream(streamId, backend, suppressedBlocks = []) {
     state.agent.output = "";
     state.agent.streamBlocks = [];
   });
-  // 全局共享：抑制重复行 / 隐藏 stderr 容量行 的状态。短时间内一次只跑一个流通常足够；
+  // 全局共享：抑制重复行的状态。短时间内一次只跑一个流通常足够；
   // 多 tab 同时跑也只会抑制一些边角日志，不影响功能。
   activeCodexSuppressedLines = buildCodexSuppressedLines(suppressedBlocks);
-  geminiStderrCapacityModel = "";
 
   const startedAt = Date.now();
   const handle = {
@@ -903,7 +803,6 @@ function endCliStream() {
     tabStreamListeners.delete(tabId);
   }
   activeCodexSuppressedLines = new Set();
-  geminiStderrCapacityModel = "";
 }
 
 // 关闭某个 tab 时调用：彻底停掉该 tab 名下的 stream 监听
@@ -943,9 +842,7 @@ export function useCliStream() {
     summarizeCliResultOutput,
     formatCodexJsonEvent,
     formatClaudeJsonEvent,
-    formatGeminiJsonEvent,
     formatOpencodeJsonEvent,
-    sanitizeGeminiStderrLine,
     formatCliBlockSummary,
     formatCliStreamPayload,
 

@@ -1,4 +1,4 @@
-// 运行时后端管理 — OpenCode/Codex/Claude/Gemini 的启停、登录、模型切换、
+// 运行时后端管理 — OpenCode/Codex/Claude 的启停、登录、模型切换、
 // 代理配置、warmup 预热、prompt 发送。是前端与 Rust 子系统之间的桥梁。
 import {
   attachDesignSession as persistDesignSession,
@@ -7,7 +7,6 @@ import {
   getClaudeStatus,
   getCodexStatus,
   getDesktopContext,
-  getGeminiStatus,
   getOpencodeConfig,
   getOpencodeConfigProviders,
   getOpencodePreferences,
@@ -15,18 +14,15 @@ import {
   getOpencodeStoredApiKey,
   listClaudeModels,
   listCodexModels,
-  listGeminiModels,
   listOpencodeAgents,
   listOpencodeMessages,
   listOpencodeProviderAuth,
   listOpencodeProviders,
   openClaudeLogin,
   openCodexLogin,
-  openGeminiLogin,
   runOpencodeShell,
   sendClaudePrompt,
   sendCodexPrompt,
-  sendGeminiPrompt,
   sendOpencodePrompt,
   startOpencode,
   stopOpencode,
@@ -36,7 +32,6 @@ import {
   updateOpencodePreferences,
   verifyClaude,
   verifyCodex,
-  verifyGemini,
   warmRuntimeBackend,
 } from "../lib/desktop-api.js";
 import { cloneSnapshot, inferAgentText } from "../lib/studio-utils.js";
@@ -65,7 +60,6 @@ const {
   styles,
   activeRuntimeBackend, activeRuntimeSessionId,
   runtimeDirectory, runtimeBackendDisplayName,
-  normalizeGeminiModelValue,
   availableProviders, selectedProvider,
   opencodeSmallModelOptions,
   codexModelOptions, selectedCodexModel,
@@ -276,27 +270,6 @@ function readConfiguredOpenCodeProviderApiKey(providerId) {
 }
 
 // ---------------------------------------------------------------------------
-// 辅助函数 — Gemini 二进制判断
-// ---------------------------------------------------------------------------
-
-function isGeminiDisplayBinary(value) {
-  const input = String(value || "").trim();
-  return Boolean(input && input.includes("package/dist/index.js") && input.includes("node"));
-}
-
-function resolvedGeminiModelLabel(value, fallback = t("runtime.notSet")) {
-  return normalizeGeminiModelValue(value) || fallback;
-}
-
-function normalizedGeminiBinary(value = state.agent.geminiBinary) {
-  const input = String(value || "").trim();
-  if (!input || isGeminiDisplayBinary(input)) {
-    return "gemini";
-  }
-  return input;
-}
-
-// ---------------------------------------------------------------------------
 // 辅助函数 — CLI session 同步
 // ---------------------------------------------------------------------------
 
@@ -309,8 +282,6 @@ function applyCliSessionToState(sessionId) {
     state.agent.codexThreadId = sessionId;
   } else if (activeRuntimeBackend.value === "claude") {
     state.agent.claudeSessionId = sessionId;
-  } else if (activeRuntimeBackend.value === "gemini") {
-    state.agent.geminiSessionId = sessionId;
   }
 
   writeRuntimeSession(activeRuntimeBackend.value, sessionId);
@@ -893,157 +864,6 @@ function applyClaudeModel() {
 }
 
 // ---------------------------------------------------------------------------
-// Gemini 操作
-// ---------------------------------------------------------------------------
-
-function applyGeminiStatusSnapshot(status, modelsPayload = null) {
-  const previousBinary = normalizedGeminiBinary(state.agent.geminiBinary);
-  state.agent.geminiInstalled = Boolean(status?.installed);
-  state.agent.geminiVersion = status?.version || null;
-  if (isGeminiDisplayBinary(state.agent.geminiBinary)) {
-    state.agent.geminiBinary = "gemini";
-  }
-  state.agent.geminiLoggedIn = Boolean(status?.loggedIn);
-  state.agent.geminiLoginStatus = status?.loginStatus || "";
-  state.agent.geminiAuthMethod = status?.authMethod || "";
-  const currentModelId = normalizeGeminiModelValue(
-    modelsPayload?.currentModelId || modelsPayload?.current_model_id
-  );
-  if (currentModelId) {
-    state.agent.geminiDefaultModel = currentModelId;
-  } else if (!state.agent.geminiDefaultModel) {
-    state.agent.geminiDefaultModel = normalizeGeminiModelValue(status?.defaultModel);
-  }
-  if (modelsPayload) {
-    applyGeminiModelsSnapshot(modelsPayload);
-  }
-
-  if (previousBinary !== normalizedGeminiBinary(state.agent.geminiBinary)) {
-    state.agent.geminiVerified = false;
-    state.agent.geminiVerificationMessage = "";
-  }
-}
-
-function applyGeminiModelsSnapshot(modelsPayload = null) {
-  if (!modelsPayload) {
-    return;
-  }
-
-  const availableModels = Array.isArray(modelsPayload?.availableModels)
-    ? modelsPayload.availableModels
-    : Array.isArray(modelsPayload?.available_models)
-      ? modelsPayload.available_models
-      : null;
-
-  state.agent.geminiModels = Array.isArray(availableModels)
-    ? availableModels
-      .map((model) => {
-        const id = normalizeGeminiModelValue(model?.id || model?.modelId || model?.model_id || model);
-        if (!id) {
-          return null;
-        }
-        return {
-          id,
-          name: normalizeGeminiModelValue(model?.name || model?.title) || id,
-          description: model?.description ? String(model.description).trim() : null
-        };
-      })
-      .filter(Boolean)
-    : state.agent.geminiModels;
-
-  const currentModelId = normalizeGeminiModelValue(
-    modelsPayload?.currentModelId || modelsPayload?.current_model_id
-  );
-  if (currentModelId) {
-    state.agent.geminiDefaultModel = currentModelId;
-  }
-
-  if (
-    state.agent.geminiModelId &&
-    state.agent.geminiModelId !== state.agent.geminiDefaultModel &&
-    !state.agent.geminiModels.some((model) => model.id === state.agent.geminiModelId)
-  ) {
-    state.agent.geminiModelId = state.agent.geminiDefaultModel || "";
-  }
-}
-
-async function handleOpenGeminiLogin() {
-  if (!state.desktop.isDesktop) {
-    return;
-  }
-
-  setAgentBusy(true);
-  try {
-    const result = await openGeminiLogin(
-      normalizedGeminiBinary(),
-      state.agent.proxy || null
-    );
-    state.agent.authResult = result.message || t("runtime.auth.geminiLoginDone");
-    appendAgentOutputEntry(state.agent.authResult);
-    await refreshDesktopIntegration({
-      skipProviderCatalog: true,
-      skipSessionMessages: true
-    });
-    setStatus(t("status.geminiLoginDone"), "success", "login");
-  } catch (error) {
-    state.agent.authResult = t("runtime.refresh.geminiLoginFailed", { error: error instanceof Error ? error.message : String(error) });
-    appendAgentOutputEntry(state.agent.authResult);
-    setStatus(t("status.geminiLoginFailed"), "error", "login");
-  } finally {
-    setAgentBusy(false);
-  }
-}
-
-async function handleVerifyGemini() {
-  if (!state.desktop.isDesktop) {
-    return;
-  }
-
-  setAgentBusy(true);
-  try {
-    const result = await verifyGemini(
-      normalizedGeminiBinary(),
-      normalizeGeminiModelValue(state.agent.geminiModelId)
-        || normalizeGeminiModelValue(state.agent.geminiDefaultModel)
-        || null,
-      state.agent.proxy || null
-    );
-    state.agent.geminiVerified = Boolean(result.ok);
-    state.agent.geminiVerificationMessage = result.message || "";
-    state.agent.authResult = [
-      t("runtime.auth.geminiVerifySuccess"),
-      result.message || ""
-    ]
-      .filter(Boolean)
-      .join("\n");
-    appendAgentOutputEntry(state.agent.authResult);
-    setStatus(t("status.geminiVerified"), "success", "verify");
-  } catch (error) {
-    state.agent.geminiVerified = false;
-    state.agent.geminiVerificationMessage = error instanceof Error ? error.message : String(error);
-    state.agent.authResult = [
-      t("runtime.auth.geminiVerifyFail"),
-      state.agent.geminiVerificationMessage
-    ].join("\n");
-    appendAgentOutputEntry(state.agent.authResult);
-    setStatus(t("status.geminiVerifyFailed"), "error", "verify");
-  } finally {
-    setAgentBusy(false);
-  }
-}
-
-function applyGeminiModel() {
-  state.agent.geminiVerified = false;
-  state.agent.geminiVerificationMessage = "";
-  state.agent.authResult = t("runtime.model.geminiSwitched", {
-    model: normalizeGeminiModelValue(state.agent.geminiModelId)
-      || normalizeGeminiModelValue(state.agent.geminiDefaultModel)
-      || t("runtime.model.cliDefault")
-  });
-  setStatus(t("status.geminiParamsUpdated"), "success", "save");
-}
-
-// ---------------------------------------------------------------------------
 // OpenCode 操作
 // ---------------------------------------------------------------------------
 
@@ -1256,14 +1076,12 @@ async function refreshDesktopIntegration(options = {}) {
       opencodeStatusResult,
       codexStatusResult,
       codexModelsResult,
-      claudeStatusResult,
-      geminiStatusResult
+      claudeStatusResult
     ] = await Promise.allSettled([
       getOpencodeStatus(),
       getCodexStatus(state.agent.codexBinary.trim() || "codex"),
       listCodexModels(),
-      getClaudeStatus(state.agent.claudeBinary.trim() || "claude"),
-      getGeminiStatus(normalizedGeminiBinary())
+      getClaudeStatus(state.agent.claudeBinary.trim() || "claude")
     ]);
 
     const refreshErrors = [];
@@ -1304,15 +1122,6 @@ async function refreshDesktopIntegration(options = {}) {
         : readRuntimeSession("claude") || state.agent.claudeSessionId || null;
     } else {
       refreshErrors.push(`Claude：${claudeStatusResult.reason instanceof Error ? claudeStatusResult.reason.message : String(claudeStatusResult.reason)}`);
-    }
-
-    if (geminiStatusResult.status === "fulfilled") {
-      applyGeminiStatusSnapshot(geminiStatusResult.value);
-      state.agent.geminiSessionId = state.design.currentId
-        ? readRuntimeSession("gemini")
-        : readRuntimeSession("gemini") || state.agent.geminiSessionId || null;
-    } else {
-      refreshErrors.push(`Gemini：${geminiStatusResult.reason instanceof Error ? geminiStatusResult.reason.message : String(geminiStatusResult.reason)}`);
     }
 
     if (state.agent.running) {
@@ -1367,23 +1176,6 @@ async function refreshDesktopIntegration(options = {}) {
       appendAgentOutputEntry(t("runtime.refresh.partialFailed", { errors: refreshErrors.join("；") }));
     }
 
-    if (geminiStatusResult.status === "fulfilled") {
-      const currentBinary = normalizedGeminiBinary();
-      const currentProxy = state.agent.proxy || null;
-      void Promise.race([
-        listGeminiModels(currentBinary, currentProxy),
-        new Promise((_, reject) => {
-          setTimeout(() => reject(new Error(t("runtime.refresh.geminiModelTimeout"))), 4000);
-        })
-      ])
-        .then((models) => {
-          applyGeminiModelsSnapshot(models);
-        })
-        .catch((error) => {
-          appendAgentOutputEntry(t("runtime.refresh.geminiModelFailed", { error: error instanceof Error ? error.message : String(error) }));
-        });
-    }
-
     if (claudeStatusResult.status === "fulfilled" && state.agent.claudeInstalled) {
       const currentBinary = state.agent.claudeBinary.trim() || "claude";
       void Promise.race([
@@ -1427,10 +1219,6 @@ function runtimeWarmupEligible(backend) {
     return state.agent.claudeInstalled && state.agent.claudeLoggedIn;
   }
 
-  if (backend === "gemini") {
-    return state.agent.geminiInstalled && state.agent.geminiLoggedIn;
-  }
-
   return false;
 }
 
@@ -1464,10 +1252,6 @@ function runtimeWarmupPayload(backend) {
     return payload;
   }
 
-  payload.binary = normalizedGeminiBinary();
-  payload.model = normalizeGeminiModelValue(state.agent.geminiModelId)
-    || normalizeGeminiModelValue(state.agent.geminiDefaultModel)
-    || null;
   return payload;
 }
 
@@ -1529,8 +1313,6 @@ async function ensureRuntimeWarmup(backend, options = {}) {
           state.agent.codexThreadId = sessionId;
         } else if (backend === "claude") {
           state.agent.claudeSessionId = sessionId;
-        } else if (backend === "gemini") {
-          state.agent.geminiSessionId = sessionId;
         }
         writeRuntimeSession(backend, sessionId);
       }
@@ -1554,7 +1336,7 @@ async function ensureRuntimeWarmup(backend, options = {}) {
 }
 
 function scheduleRuntimeWarmups() {
-  const backends = ["codex", "claude", "gemini"];
+  const backends = ["codex", "claude"];
   if (!opencodeAutoStartAttempted && !opencodeAutoStartSuppressed) {
     // OpenCode 的 warmup 会真正 spawn opencode HTTP server（含 MCP 子进程），
     // 远比另外三个 CLI 预热重。放最前面让它先走，同时单独一条 task，避免阻塞
@@ -1592,20 +1374,14 @@ function activeCliBinary() {
   if (activeRuntimeBackend.value === "codex") {
     return state.agent.codexBinary.trim() || "codex";
   }
-  if (activeRuntimeBackend.value === "claude") {
-    return state.agent.claudeBinary.trim() || "claude";
-  }
-  return normalizedGeminiBinary();
+  return state.agent.claudeBinary.trim() || "claude";
 }
 
 function activeCliModel() {
   if (activeRuntimeBackend.value === "codex") {
     return state.agent.codexModelId || state.agent.codexDefaultModel || null;
   }
-  if (activeRuntimeBackend.value === "claude") {
-    return state.agent.claudeModelId || state.agent.claudeDefaultModel || null;
-  }
-  return state.agent.geminiModelId || null;
+  return state.agent.claudeModelId || state.agent.claudeDefaultModel || null;
 }
 
 function activeCliEffort() {
@@ -1624,9 +1400,6 @@ function runtimeLoginReminder(backend = activeRuntimeBackend.value) {
   }
   if (backend === "claude" && !state.agent.claudeLoggedIn) {
     return t("runtime.auth.claudeNotLoggedIn");
-  }
-  if (backend === "gemini" && !state.agent.geminiLoggedIn) {
-    return t("runtime.auth.geminiNotLoggedIn");
   }
   return "";
 }
@@ -1660,16 +1433,7 @@ async function sendActiveCliPrompt({ text, system, streamId }) {
     });
   }
 
-  return sendGeminiPrompt({
-    sessionId: readRuntimeSession("gemini"),
-    text,
-    system,
-    directory: runtimeDirectory.value,
-    model: activeCliModel(),
-    binary: activeCliBinary(),
-    proxy: state.agent.proxy || null,
-    streamId
-  });
+  throw new Error(`Unsupported CLI backend: ${activeRuntimeBackend.value}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -1707,11 +1471,6 @@ async function runAgentPrompt() {
 
       if (activeRuntimeBackend.value === "claude" && !state.agent.claudeInstalled) {
         setStatus(t("status.noClaudeDetected"), "warning", "login");
-        return;
-      }
-
-      if (activeRuntimeBackend.value === "gemini" && !state.agent.geminiInstalled) {
-        setStatus(t("status.noGeminiDetected"), "warning", "login");
         return;
       }
 
@@ -2206,14 +1965,6 @@ export function useRuntimeAgent() {
     applyClaudeStatusSnapshot,
     applyClaudeModelsSnapshot,
 
-    // Gemini 操作
-    handleOpenGeminiLogin,
-    handleVerifyGemini,
-    applyGeminiModel,
-    applyGeminiStatusSnapshot,
-    applyGeminiModelsSnapshot,
-    normalizedGeminiBinary,
-
     // 预热系统
     runtimeWarmupEligible,
     runtimeWarmupPayload,
@@ -2247,7 +1998,6 @@ export function useRuntimeAgent() {
     setRuntimeBackend,
     readRuntimeSession,
     writeRuntimeSession,
-    resolvedGeminiModelLabel,
     clearPendingBrowserAuth,
     applyProviderConnectionSnapshot,
     applyCliSessionToState,

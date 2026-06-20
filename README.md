@@ -35,7 +35,7 @@ DesignCode supports a wide range of graphic design needs, including but not limi
 4. Export multi-layer PSD files where each layer has a proper alpha channel.
 5. Pre-configure size requirements, style presets, and content fields from the menu.
 6. Build a user-level asset library, and select which assets to use in each design.
-7. Supports Codex, Claude Code, OpenCode, and Gemini CLI.
+7. Supports Codex, Claude Code, and OpenCode.
 8. Full version history — every single adjustment can be traced back.
 9. i18n-based internationalization support.
 10. Cross-platform — supports macOS and Windows.
@@ -46,7 +46,7 @@ DesignCode supports a wide range of graphic design needs, including but not limi
 
 For users who want to get started quickly, download the installer for your platform from [Releases](https://github.com/haruhiyuki/DesignCode/releases/latest).
 
-DesignCode requires an Agent backend to function, and comes with Codex, OpenCode, and Gemini CLI built in. You can obtain an API key for any model to use with OpenCode, or use Codex and Gemini CLI through their respective subscriptions.
+DesignCode requires an Agent backend to function, and comes with Codex and OpenCode built in. You can obtain an API key for any model to use with OpenCode, or use Codex through its subscription.
 
 DesignCode includes support for Claude Code, but due to licensing restrictions, Claude Code cannot be bundled with the project. If you wish to use it, please install it separately.
 

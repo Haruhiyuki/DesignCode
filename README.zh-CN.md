@@ -35,7 +35,7 @@ DesignCode 广泛支持各类型的平面设计需求，包括但不限于海报
 4. 可导出多图层PSD文件，每个图层都具有正常的透明通道。
 5. 可在菜单中预先配置尺寸要求、风格预设、内容字段。
 6. 建立用户级素材库，并在每个设计稿中选择使用哪些素材。
-7. 支持使用 Codex、Claude Code、OpenCode、Gemini CLI。
+7. 支持使用 Codex、Claude Code、OpenCode。
 8. 拥有完整的历史记录功能，每一次调整都可回溯。
 9. 基于 i18n 的国际化支持。
 10. 跨平台，支持 macOS、Windows。
@@ -47,7 +47,7 @@ DesignCode 广泛支持各类型的平面设计需求，包括但不限于海报
 
 对于希望快速使用 DesignCode 的用户，可在 [Releases](https://github.com/haruhiyuki/DesignCode/releases/latest) 中下载对应系统的安装包。
 
-DesignCode 需要接入 Agent 进行使用，并且已经内置了Codex、OpenCode和Gemini CLI。你可以获取任意模型的 API Key 从而在OpenCode中使用，或者通过相应的订阅使用 Codex 和 Gemini CLI。
+DesignCode 需要接入 Agent 进行使用，并且已经内置了Codex和OpenCode。你可以获取任意模型的 API Key 从而在OpenCode中使用，或者通过订阅使用 Codex。
 
 DesignCode 添加了对Claude Code的支持，但由于使用限制，我们不能在项目中打包 Claude Code，如需使用需要自行安装。
 

@@ -17,7 +17,6 @@ const {
   codexReasoningOptions,
   claudeModelOptions,
   claudeEffortOptions,
-  geminiModelOptions,
   apiProviderPickerOptions,
   selectedProviderModels,
   providerConnectionLabel,
@@ -33,9 +32,6 @@ const {
   handleOpenClaudeLogin,
   handleVerifyClaude,
   applyClaudeModel,
-  handleOpenGeminiLogin,
-  handleVerifyGemini,
-  applyGeminiModel,
   handleStartOpencode,
   handleCreateSession,
   applySelectedModel
@@ -101,9 +97,6 @@ function backendInstalled(backend) {
   if (backend === "claude") {
     return state.agent.claudeInstalled;
   }
-  if (backend === "gemini") {
-    return state.agent.geminiInstalled;
-  }
   return state.agent.installed;
 }
 
@@ -116,9 +109,6 @@ function backendReady(backend) {
   }
   if (backend === "claude") {
     return Boolean(state.agent.claudeInstalled && state.agent.claudeLoggedIn);
-  }
-  if (backend === "gemini") {
-    return Boolean(state.agent.geminiInstalled && state.agent.geminiLoggedIn);
   }
   return Boolean(
     state.agent.installed
@@ -145,10 +135,7 @@ function backendStatusLabel(backend) {
   if (backend === "codex") {
     return state.agent.codexLoggedIn ? t("guidedSetup.statusLoggedIn") : t("guidedSetup.statusNotLoggedIn");
   }
-  if (backend === "claude") {
-    return state.agent.claudeLoggedIn ? t("guidedSetup.statusLoggedIn") : t("guidedSetup.statusNotLoggedIn");
-  }
-  return state.agent.geminiLoggedIn ? t("guidedSetup.statusLoggedIn") : t("guidedSetup.statusNotLoggedIn");
+  return state.agent.claudeLoggedIn ? t("guidedSetup.statusLoggedIn") : t("guidedSetup.statusNotLoggedIn");
 }
 
 function chipTone(value) {
@@ -414,46 +401,6 @@ function finishSetup() {
                 <button type="button" class="button button-solid" :disabled="!state.desktop.isDesktop || state.agent.busy || !state.agent.claudeInstalled" @click="handleOpenClaudeLogin">{{ t("runtime.claude.login") }}</button>
                 <button type="button" class="button button-ghost" :disabled="!state.desktop.isDesktop || state.agent.busy" @click="applyClaudeModel">{{ t("runtime.claude.confirmParams") }}</button>
                 <button type="button" class="button button-ghost" :disabled="!state.desktop.isDesktop || state.agent.busy || !state.agent.claudeInstalled || !state.agent.claudeLoggedIn" @click="handleVerifyClaude">{{ t("runtime.claude.verifyConnection") }}</button>
-              </div>
-            </div>
-
-            <div v-else-if="activeRuntimeBackend === 'gemini'" class="guided-section-card">
-              <div class="guided-card-head">
-                <strong>Gemini CLI</strong>
-                <small>{{ t("runtime.gemini.description") }}</small>
-              </div>
-              <div class="guided-chip-row">
-                <span class="guided-status-pill" :data-ready="state.agent.geminiInstalled">{{ state.agent.geminiInstalled ? t("runtime.installed") : t("runtime.notInstalled") }}</span>
-                <span class="guided-status-pill" :data-ready="state.agent.geminiLoggedIn">{{ state.agent.geminiLoggedIn ? t("runtime.gemini.authDetected") : t("runtime.gemini.pendingVerify") }}</span>
-                <span class="guided-status-pill" :data-ready="state.agent.geminiVerified">{{ state.agent.geminiVerified ? t("runtime.verified") : t("guidedSetup.statusNotVerified") }}</span>
-              </div>
-
-              <details class="guided-advanced">
-                <summary>{{ t("guidedSetup.advancedRuntime") }}</summary>
-                <label class="field">
-                  <span>{{ t("runtime.gemini.pathLabel") }}</span>
-                  <input v-model="state.agent.geminiBinary" :disabled="!state.desktop.isDesktop || state.agent.busy" :placeholder="t('runtime.gemini.pathPlaceholder')" />
-                </label>
-                <div class="field">
-                  <span>{{ t("runtime.gemini.modelLabel") }}</span>
-                  <div class="custom-select" :class="{ open: activeDropdown.id === 'guided-gemini-model' }">
-                    <button type="button" class="custom-select-trigger" :disabled="!state.desktop.isDesktop || state.agent.busy" @click="openDropdown('guided-gemini-model', $event.currentTarget)">
-                      <span class="custom-select-value">{{ geminiModelOptions.find(m => m.id === state.agent.geminiModelId)?.name || state.agent.geminiModelId || state.agent.geminiDefaultModel || '\u2014' }}</span>
-                      <span class="custom-select-arrow" aria-hidden="true"></span>
-                    </button>
-                    <div v-if="activeDropdown.id === 'guided-gemini-model'" class="custom-select-dropdown" :style="{ minWidth: activeDropdown.rect?.width + 'px' }">
-                      <button v-for="model in geminiModelOptions" :key="model.id || 'default'" type="button" class="custom-select-option" :data-active="model.id === state.agent.geminiModelId" @click="state.agent.geminiModelId = model.id; closeDropdown()">
-                        {{ model.name }}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </details>
-
-              <div class="action-row guided-action-row">
-                <button type="button" class="button button-solid" :disabled="!state.desktop.isDesktop || state.agent.busy || !state.agent.geminiInstalled" @click="handleOpenGeminiLogin">{{ t("runtime.gemini.login") }}</button>
-                <button type="button" class="button button-ghost" :disabled="!state.desktop.isDesktop || state.agent.busy" @click="applyGeminiModel">{{ t("runtime.gemini.confirmModel") }}</button>
-                <button type="button" class="button button-ghost" :disabled="!state.desktop.isDesktop || state.agent.busy || !state.agent.geminiInstalled" @click="handleVerifyGemini">{{ t("runtime.gemini.verifyConnection") }}</button>
               </div>
             </div>
 

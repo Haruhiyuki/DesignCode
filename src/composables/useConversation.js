@@ -850,30 +850,6 @@ function parseClaudeStreamBlock(event) {
   return null;
 }
 
-function parseGeminiStreamBlock(event) {
-  const approval = resolveApprovalDetails(event);
-  if (approval) {
-    return approval;
-  }
-
-  const message =
-    event.result ||
-    event.response ||
-    event.text ||
-    event.message?.text ||
-    event.content?.text ||
-    event.content ||
-    "";
-  const safeMessage = normalizeConversationMessage(message);
-  return safeMessage
-    ? {
-        id: nextAgentStreamBlockId("text"),
-        type: "text",
-        content: safeMessage
-      }
-    : null;
-}
-
 function parseOpencodeStreamBlock(event) {
   const eventType = event.type || "";
 
@@ -1236,8 +1212,6 @@ function parseCliStreamBlock(payload) {
   switch (payload.backend) {
     case "claude":
       return parseClaudeStreamBlock(event);
-    case "gemini":
-      return parseGeminiStreamBlock(event);
     case "opencode":
       return parseOpencodeStreamBlock(event);
     default:
@@ -1358,7 +1332,7 @@ async function handleConversationBlockAction(blockId, action) {
   };
   state.agent.streamBlocks = blocks;
 
-  if (backend !== "opencode" && backend !== "codex" && backend !== "gemini") {
+  if (backend !== "opencode" && backend !== "codex") {
     blocks[index] = {
       ...blocks[index],
       interactive: false,
@@ -1517,7 +1491,6 @@ export function useConversation({
     // 各后端流式事件解析
     parseCodexStreamBlock,
     parseClaudeStreamBlock,
-    parseGeminiStreamBlock,
     parseOpencodeStreamBlock,
     extractOpencodeMessages,
     buildOpencodeBlocksFromMessages,

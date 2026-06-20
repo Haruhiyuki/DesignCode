@@ -25,7 +25,7 @@ const DESIGN_FILE = "design.html";
 const ART_ASSET_MANIFEST_FILE = "art-assets.json";
 const WORKSPACE_SEED_MARKER = "DESIGNCODE_WORKSPACE_SEED";
 const DEFAULT_RUNTIME_BACKEND = "opencode";
-const SUPPORTED_RUNTIME_BACKENDS = new Set(["opencode", "codex", "claude", "gemini"]);
+const SUPPORTED_RUNTIME_BACKENDS = new Set(["opencode", "codex", "claude"]);
 const WINDOWS_RESERVED_NAMES = new Set([
   "con",
   "prn",
@@ -301,8 +301,7 @@ function normalizeRuntimeSessions(project = null) {
   const sessions = {
     opencode: null,
     codex: null,
-    claude: null,
-    gemini: null
+    claude: null
   };
 
   if (project?.runtimeSessions && typeof project.runtimeSessions === "object") {
@@ -314,9 +313,6 @@ function normalizeRuntimeSessions(project = null) {
     }
     if (project.runtimeSessions.claude) {
       sessions.claude = project.runtimeSessions.claude;
-    }
-    if (project.runtimeSessions.gemini) {
-      sessions.gemini = project.runtimeSessions.gemini;
     }
   }
 
@@ -361,8 +357,6 @@ function runtimeBackendLabel(runtimeBackend) {
       return "Codex";
     case "claude":
       return "Claude Code";
-    case "gemini":
-      return "Gemini CLI";
     default:
       return "OpenCode";
   }

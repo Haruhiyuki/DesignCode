@@ -335,25 +335,6 @@ export async function getClaudeStatus(binary) {
   });
 }
 
-export async function getGeminiStatus(binary) {
-  if (!isTauriRuntime()) {
-    return {
-      installed: false,
-      version: null,
-      binary: binary || "gemini",
-      loggedIn: false,
-      loginStatus: "Tauri runtime is not available.",
-      authMethod: null,
-      defaultModel: null,
-      defaultEffort: null
-    };
-  }
-
-  return invoke("gemini_status", {
-    binary: binary || null
-  });
-}
-
 export async function listCodexModels() {
   if (!isTauriRuntime()) {
     return [];
@@ -377,20 +358,6 @@ export async function listClaudeModels(binary) {
   });
 }
 
-export async function listGeminiModels(binary, proxy = null) {
-  if (!isTauriRuntime()) {
-    return {
-      availableModels: [],
-      currentModelId: null
-    };
-  }
-
-  return invoke("gemini_models", {
-    binary: binary || null,
-    proxy: proxy || null
-  });
-}
-
 export async function openCodexLogin(binary, deviceAuth = false, proxy = null) {
   return invoke("codex_open_login", {
     binary: binary || null,
@@ -401,13 +368,6 @@ export async function openCodexLogin(binary, deviceAuth = false, proxy = null) {
 
 export async function openClaudeLogin(binary, proxy = null) {
   return invoke("claude_open_login", {
-    binary: binary || null,
-    proxy: proxy || null
-  });
-}
-
-export async function openGeminiLogin(binary, proxy = null) {
-  return invoke("gemini_open_login", {
     binary: binary || null,
     proxy: proxy || null
   });
@@ -427,14 +387,6 @@ export async function verifyClaude(binary, model, effort = null, proxy = null) {
     binary: binary || null,
     model: model || null,
     effort: effort || null,
-    proxy: proxy || null
-  });
-}
-
-export async function verifyGemini(binary, model, proxy = null) {
-  return invoke("gemini_verify", {
-    binary: binary || null,
-    model: model || null,
     proxy: proxy || null
   });
 }
@@ -492,19 +444,6 @@ export async function sendClaudePrompt({ sessionId, text, system, directory, mod
     directory,
     model: model || null,
     effort: effort || null,
-    binary: binary || null,
-    proxy: proxy || null,
-    streamId: streamId || null
-  });
-}
-
-export async function sendGeminiPrompt({ sessionId, text, system, directory, model, binary, proxy, streamId }) {
-  return invokePerTab("gemini_send_prompt", {
-    sessionId: sessionId || null,
-    text,
-    system: system || null,
-    directory,
-    model: model || null,
     binary: binary || null,
     proxy: proxy || null,
     streamId: streamId || null

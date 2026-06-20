@@ -117,18 +117,6 @@ export function createWorkspaceStore() {
       claudeSessionId: null,
       claudeVerified: false,
       claudeVerificationMessage: "",
-      geminiInstalled: false,
-      geminiVersion: null,
-      geminiBinary: "gemini",
-      geminiLoggedIn: false,
-      geminiLoginStatus: "",
-      geminiAuthMethod: "",
-      geminiDefaultModel: "",
-      geminiModels: [],
-      geminiModelId: "",
-      geminiSessionId: null,
-      geminiVerified: false,
-      geminiVerificationMessage: "",
       authResult: "",
       output: "",
       outputDesignId: null,
@@ -147,8 +135,7 @@ export function createWorkspaceStore() {
       runtimeSessions: {
         opencode: null,
         codex: null,
-        claude: null,
-        gemini: null
+        claude: null
       },
       workspaceDir: null,
       chat: [],
@@ -246,15 +233,13 @@ export function createWorkspaceStore() {
   const runtimeWarmupState = reactive({
     opencode: { key: "", ready: false },
     codex: { key: "", ready: false },
-    claude: { key: "", ready: false },
-    gemini: { key: "", ready: false }
+    claude: { key: "", ready: false }
   });
 
   const runtimeWarmupPromises = {
     opencode: null,
     codex: null,
-    claude: null,
-    gemini: null
+    claude: null
   };
 
   const conversationExpandedBlocks = reactive({});

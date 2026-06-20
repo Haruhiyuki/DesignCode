@@ -196,7 +196,7 @@ impl CodexAppServerClient {
     pub fn stop(&self) {
         if let Ok(mut child) = self.child.lock() {
             // 先递归清理子进程树，防止 Codex CLI 的子进程残留
-            use crate::gemini::kill_child_descendants;
+            use crate::utils::kill_child_descendants;
             kill_child_descendants(child.id());
             let _ = child.kill();
             let _ = child.wait();

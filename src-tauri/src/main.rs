@@ -4,26 +4,26 @@
 // DesignCode Desktop — Tauri 应用入口
 //
 // 设计工作流编排、tauri command 处理器、应用初始化。
-// 业务逻辑拆分到同级模块：codex / claude / gemini / opencode / utils / types / menu。
+// 业务逻辑拆分到同级模块：codex / claude / opencode / utils / types / menu /
+// runtime_lifecycle（跨 runtime 的退出/孤儿清理编排）。
 
 mod types;
 mod menu;
 mod utils;
 mod codex;
 mod claude;
-mod gemini;
 mod opencode;
+mod runtime_lifecycle;
 use types::*;
 use utils::*;
 use codex::*;
 use claude::*;
-use gemini::*;
 use opencode::*;
+use runtime_lifecycle::*;
 
 use reqwest::Method;
 use serde_json::{json, Value};
 use std::process::{Command, Stdio};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::time::sleep;
@@ -234,9 +234,6 @@ fn summarize_design_mode_for_backend(mode: &str, backend: &str) -> String {
         ("claude", "generate") => "Initial render completed via Claude Code.".to_string(),
         ("claude", "edit") => "Render updated successfully via Claude Code.".to_string(),
         ("claude", _) => "Claude Code workspace updated.".to_string(),
-        ("gemini", "generate") => "Initial render completed via Gemini CLI.".to_string(),
-        ("gemini", "edit") => "Render updated successfully via Gemini CLI.".to_string(),
-        ("gemini", _) => "Gemini CLI workspace updated.".to_string(),
         (_, "generate") => "Initial render completed via OpenCode.".to_string(),
         (_, "edit") => "Render updated successfully via OpenCode.".to_string(),
         _ => "OpenCode workspace updated.".to_string(),
@@ -618,17 +615,6 @@ async fn run_cli_design(
             runtime_proxy,
             stream_id,
         )?,
-        "gemini" => run_gemini_exec(
-            &app,
-            state.inner(),
-            &prompt,
-            &workspace_dir,
-            existing_session_id.as_deref(),
-            model,
-            runtime_binary,
-            runtime_proxy,
-            stream_id,
-        )?,
         _ => return Err(format!("Unsupported CLI backend: {backend}")),
     };
     let fallback_summary = summarize_design_mode_for_backend(mode, backend);
@@ -715,7 +701,6 @@ async fn desktop_generate_design(
     match runtime_backend_from_payload(&payload) {
         "codex" => run_codex_design(app, run_id, payload, "generate").await,
         "claude" => run_cli_design(app, state, run_id.as_str(), payload, "generate", "claude").await,
-        "gemini" => run_cli_design(app, state, run_id.as_str(), payload, "generate", "gemini").await,
         _ => run_opencode_design(app, state, run_id.as_str(), payload, "generate").await,
     }
 }
@@ -730,7 +715,6 @@ async fn desktop_edit_design(
     match runtime_backend_from_payload(&payload) {
         "codex" => run_codex_design(app, run_id, payload, "edit").await,
         "claude" => run_cli_design(app, state, run_id.as_str(), payload, "edit", "claude").await,
-        "gemini" => run_cli_design(app, state, run_id.as_str(), payload, "edit", "gemini").await,
         _ => run_opencode_design(app, state, run_id.as_str(), payload, "edit").await,
     }
 }
@@ -982,25 +966,6 @@ async fn claude_models(
 }
 
 #[tauri::command]
-fn gemini_status(app: AppHandle, binary: Option<String>) -> Result<CliRuntimeStatus, String> {
-    gemini_status_snapshot(&app, binary.as_deref())
-}
-
-#[tauri::command]
-async fn gemini_models(
-    app: AppHandle,
-    binary: Option<String>,
-    proxy: Option<String>,
-) -> Result<GeminiModelsResult, String> {
-    let handle = app.clone();
-    tokio::task::spawn_blocking(move || {
-        run_gemini_models(&handle, binary.as_deref(), proxy.as_deref())
-    })
-    .await
-    .map_err(|error| format!("Gemini models task failed to join: {error}"))?
-}
-
-#[tauri::command]
 fn codex_update_settings(
     app: AppHandle,
     model: Option<String>,
@@ -1044,24 +1009,6 @@ fn claude_open_login(
             binary.as_deref(),
             proxy.as_deref()
         )?
-    }))
-}
-
-#[tauri::command]
-async fn gemini_open_login(
-    app: AppHandle,
-    binary: Option<String>,
-    proxy: Option<String>,
-) -> Result<Value, String> {
-    let handle = app.clone();
-    let join = tokio::task::spawn_blocking(move || {
-        run_gemini_auth(&handle, binary.as_deref(), proxy.as_deref())
-    });
-    let message = join
-        .await
-        .map_err(|error| format!("Gemini authentication task failed to join: {error}"))??;
-    Ok(json!({
-        "message": message
     }))
 }
 
@@ -1110,28 +1057,6 @@ async fn claude_verify(
     let message = join
         .await
         .map_err(|error| format!("Claude verification task failed to join: {error}"))??;
-    Ok(CodexVerifyResult { ok: true, message })
-}
-
-#[tauri::command]
-async fn gemini_verify(
-    app: AppHandle,
-    model: Option<String>,
-    binary: Option<String>,
-    proxy: Option<String>,
-) -> Result<CodexVerifyResult, String> {
-    let handle = app.clone();
-    let join = tokio::task::spawn_blocking(move || {
-        run_gemini_probe(
-            &handle,
-            model.as_deref(),
-            binary.as_deref(),
-            proxy.as_deref(),
-        )
-    });
-    let message = join
-        .await
-        .map_err(|error| format!("Gemini verification task failed to join: {error}"))??;
     Ok(CodexVerifyResult { ok: true, message })
 }
 
@@ -1245,7 +1170,7 @@ async fn opencode_stop(
     let port_to_stop = with_opencode_state(state.inner(), run_id.as_str(), |opencode| {
         let port = opencode.port;
         if let Some(child) = opencode.child.as_mut() {
-            crate::gemini::kill_child_descendants(child.id());
+            crate::utils::kill_child_descendants(child.id());
             let _ = child.kill();
             let _ = child.wait();
         }
@@ -1418,51 +1343,6 @@ async fn claude_send_prompt(
 }
 
 #[tauri::command]
-async fn gemini_send_prompt(
-    app: AppHandle,
-    run_id: String,
-    session_id: Option<String>,
-    text: String,
-    system: Option<String>,
-    directory: String,
-    model: Option<String>,
-    binary: Option<String>,
-    proxy: Option<String>,
-    stream_id: Option<String>,
-) -> Result<Value, String> {
-    let _ = run_id; // Gemini 已是 per-run 模式（基于 session_id），run_id 仅用于前端追踪
-    let prompt = if let Some(system_prompt) = system.filter(|value| !value.trim().is_empty()) {
-        compose_codex_design_prompt(&system_prompt, &text)
-    } else {
-        text.clone()
-    };
-
-    let handle = app.clone();
-    let join = tokio::task::spawn_blocking(move || {
-        let runtime = handle.state::<RuntimeState>();
-        run_gemini_exec(
-            &handle,
-            runtime.inner(),
-            &prompt,
-            &directory,
-            session_id.as_deref(),
-            model.as_deref(),
-            binary.as_deref(),
-            proxy.as_deref(),
-            stream_id.as_deref(),
-        )
-    });
-    let (next_session_id, output) = join
-        .await
-        .map_err(|error| format!("Gemini prompt task failed to join: {error}"))??;
-
-    Ok(json!({
-        "sessionId": next_session_id,
-        "output": output
-    }))
-}
-
-#[tauri::command]
 async fn runtime_warmup(
     app: AppHandle,
     state: State<'_, RuntimeState>,
@@ -1525,31 +1405,6 @@ async fn runtime_warmup(
                     "sessionId": active_session
                 }))
             }
-            "gemini" => {
-                let cwd = directory
-                    .as_deref()
-                    .filter(|value| !value.trim().is_empty())
-                    .ok_or_else(|| "Missing workspace directory for Gemini warmup.".to_string())?;
-                let client = ensure_gemini_acp_client(
-                    &handle,
-                    runtime.inner(),
-                    cwd,
-                    session_id.as_deref(),
-                    model.as_deref(),
-                    binary.as_deref(),
-                    proxy.as_deref(),
-                )?;
-                let active_session = client
-                    .session_id
-                    .lock()
-                    .ok()
-                    .and_then(|value| value.clone());
-                Ok(json!({
-                    "backend": "gemini",
-                    "ready": true,
-                    "sessionId": active_session
-                }))
-            }
             _ => Err(format!("Unsupported runtime backend for warmup: {backend}")),
         }
     })
@@ -1596,13 +1451,6 @@ async fn runtime_list_approvals(
         return Ok(Value::Array(codex_pending_approvals(&client)));
     }
 
-    if backend == "gemini" {
-        return Ok(Value::Array(gemini_pending_approvals(
-            state.inner(),
-            session_id.as_deref(),
-        )?));
-    }
-
     if backend != "opencode" {
         return Err(format!(
             "{backend} 当前执行 transport 尚未支持会话内审批查询。"
@@ -1640,10 +1488,6 @@ async fn runtime_reply_approval(
         let client = with_codex_state(state.inner(), CODEX_SHARED_KEY, |codex| codex.client.clone())?
             .ok_or_else(|| "Codex App Server is not running.".to_string())?;
         return reply_codex_approval(&client, approval_id.as_str(), decision.as_str());
-    }
-
-    if backend == "gemini" {
-        return reply_gemini_approval(state.inner(), approval_id.as_str(), decision.as_str());
     }
 
     if backend != "opencode" {
@@ -2185,7 +2029,7 @@ async fn runtime_cleanup_tab(
         if let Some(mut run) = map.remove(run_id.as_str()) {
             if let Some(child) = run.child.as_mut() {
                 // 先递归清掉 opencode 派生的 node 子孙，再杀主进程
-                crate::gemini::kill_child_descendants(child.id());
+                crate::utils::kill_child_descendants(child.id());
                 let _ = child.kill();
                 let _ = child.wait();
             }
@@ -2222,7 +2066,6 @@ async fn runtime_cleanup_tab(
 // - Codex（共享进程）：移除 active_turns 中 stream_id 匹配的 turn，mpsc 通道 drop
 //   后 run_codex_app_server_turn 的 rx.recv_timeout 立刻 Disconnected 报错。
 // - Claude（per-tab 子进程）：杀本 tab 的子进程并 drop pending_turn，同样让 rx 断。
-// - Gemini：遍历 active_runs，找 pending_turn.stream_id 匹配的 run，调 stop()。
 // - OpenCode：POST /session/{session_id}/abort 让本地 opencode 服务停住当前生成。
 // ---------------------------------------------------------------------------
 
@@ -2270,35 +2113,6 @@ async fn runtime_abort(
                     pending.take();
                 }
                 kill_claude_stream_client(&client);
-            }
-        }
-        "gemini" => {
-            // Gemini 的 active_runs 以内部 gemini-run-N 为 key，与 tab run_id 不同。
-            // 按 pending_turn.stream_id 定位，停下匹配的 run。
-            let runs_to_stop: Vec<Arc<GeminiAcpRun>> = if let Ok(gemini) = state.gemini.lock() {
-                gemini
-                    .active_runs
-                    .values()
-                    .filter(|run| {
-                        run.pending_turn
-                            .lock()
-                            .ok()
-                            .and_then(|guard| {
-                                guard.as_ref().and_then(|turn| turn.stream_id.clone())
-                            })
-                            .as_deref()
-                            == Some(stream_ref)
-                    })
-                    .cloned()
-                    .collect()
-            } else {
-                Vec::new()
-            };
-            for run in runs_to_stop {
-                if let Some(turn) = take_gemini_pending_turn(&run.pending_turn) {
-                    drop(turn); // drop waiter → rx Disconnected
-                }
-                run.stop();
             }
         }
         "opencode" => {
@@ -2626,24 +2440,19 @@ fn main() {
             opencode_status,
             codex_status,
             claude_status,
-            gemini_status,
             codex_models,
             claude_models,
-            gemini_models,
             codex_update_settings,
             codex_open_login,
             claude_open_login,
-            gemini_open_login,
             codex_verify,
             claude_verify,
-            gemini_verify,
             opencode_start,
             opencode_stop,
             opencode_agents,
             opencode_create_session,
             codex_send_prompt,
             claude_send_prompt,
-            gemini_send_prompt,
             runtime_warmup,
             opencode_provider_list,
             opencode_provider_auth,
