@@ -79,8 +79,14 @@ const { submitConversation, stopConversation, handleComposerKeydown } = useDesig
                 <article
                   v-if="block.type === 'thought'"
                   class="agent-block agent-block-thought"
-                  :class="{ 'agent-block-thought-rich': block.variant === 'rich' }"
+                  :class="{
+                    'agent-block-thought-rich': block.variant === 'rich',
+                    'agent-block-thought-reasoning': block.variant === 'reasoning'
+                  }"
                 >
+                  <div v-if="block.variant === 'reasoning'" class="agent-block-reasoning-label">
+                    {{ t("chat.reasoningLabel") }}
+                  </div>
                   <div
                     class="conversation-block-copy markdown-body"
                     :class="{ 'is-collapsed': conversationBlockExpandable(block) && !isConversationBlockExpanded(entry.id, block) }"

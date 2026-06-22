@@ -2143,6 +2143,35 @@ textarea:disabled {
   content: none;
 }
 
+/* 思维链：单独成卡 + 左侧强调条 + 「思考过程」标签，明确区别于只读/检索类
+   工具动作的「··」思考行（前者是 Claude 的推理，后者是动作）。 */
+.agent-block-thought.agent-block-thought-reasoning {
+  display: block;
+  padding: 9px 13px;
+  border: 1px solid rgba(138, 90, 42, 0.12);
+  border-left: 3px solid rgba(138, 90, 42, 0.42);
+  border-radius: var(--radius-md);
+  background: rgba(250, 246, 240, 0.9);
+  color: #6f6155;
+  font-size: 0.84rem;
+  font-style: italic;
+  line-height: 1.7;
+}
+
+.agent-block-thought.agent-block-thought-reasoning::before {
+  content: none;
+}
+
+.agent-block-reasoning-label {
+  margin-bottom: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-style: normal;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(138, 90, 42, 0.7);
+}
+
 .agent-block-thought p,
 .agent-block-text p,
 .agent-block-confirm p,
@@ -2281,8 +2310,9 @@ textarea:disabled {
 }
 
 .agent-block-text[data-tone="result"] {
-  border-color: rgba(34, 197, 94, 0.12);
-  background: rgba(248, 250, 248, 0.94);
+  border-color: rgba(34, 197, 94, 0.16);
+  border-left: 3px solid rgba(34, 197, 94, 0.38);
+  background: rgba(248, 250, 248, 0.96);
 }
 
 .agent-block-text[data-tone="system"] {

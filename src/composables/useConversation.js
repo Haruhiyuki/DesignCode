@@ -650,6 +650,60 @@ function parseCodexStreamBlock(event) {
 // 不去重会导致对话记录里同一段回答连续出现两遍。用模块级缓存记录上一次
 // assistant text，result 命中就丢掉（日志那条路已经做过相同处理）。
 let _lastClaudeBlockText = "";
+// 记录本轮最后一个 assistant 文本块的 id。turn 结束的 result 事件文本几乎总是
+// 复述这段「最终回答」，命中时就把这个已流式显示的块就地提升为「结果」样式，
+// 从而把"中间叙述文本"（默认白卡）和"最终结果文本"（结果样式）在视觉上区分开。
+let _lastClaudeTextBlockId = "";
+
+// Claude 的 stream-json 把"工具调用"和"工具结果"拆成两条事件：
+//   1) assistant 事件里的 tool_use（带稳定 id），此时我们建一个 running 占位块；
+//   2) 之后的 user 事件里的 tool_result（带 tool_use_id），携带真正的 stdout/状态。
+// 没有第 2 步的回填，Bash 命令块会永远停在 running、永远没有输出。这里用一个
+// 模块级映射记下每个 tool_use 的元信息（类型、命令、标签），等 tool_result 到达
+// 时按 id 把结果回填到对应的块上。消费后即删除，避免长会话里无界增长。
+const _claudeToolUses = new Map();
+
+// 单条工具结果输出的上限：Claude CLI 自身已会截断大输出，这里再加一道软上限
+// 防止极端情况下把超大文本灌进 DOM 拖垮渲染。
+const CLAUDE_TOOL_OUTPUT_LIMIT = 16000;
+
+// 把 tool_result 的 content 规整成纯文本，并判断是否为错误结果。
+// content 可能是字符串，也可能是 [{type:"text",text},{type:"image"}] 数组。
+function extractClaudeToolResultText(item = {}) {
+  const isError = item.is_error === true || item.isError === true;
+  const content = item.content;
+  let text = "";
+
+  if (typeof content === "string") {
+    text = content;
+  } else if (Array.isArray(content)) {
+    text = content
+      .map((part) => {
+        if (typeof part === "string") {
+          return part;
+        }
+        if (part && typeof part === "object") {
+          if (typeof part.text === "string") {
+            return part.text;
+          }
+          if (part.type === "image") {
+            return "[image]";
+          }
+        }
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n");
+  } else if (content && typeof content === "object") {
+    text = pickFirstText(content);
+  }
+
+  let normalized = normalizeConversationMessage(text);
+  if (normalized.length > CLAUDE_TOOL_OUTPUT_LIMIT) {
+    normalized = `${normalized.slice(0, CLAUDE_TOOL_OUTPUT_LIMIT)}\n${t("chat.outputTruncated")}`;
+  }
+  return { text: normalized, isError };
+}
 
 // 从路径中取文件名，用于把 "/Users/foo/bar/baz.txt" 压成 "baz.txt"。
 // Claude 的 Read/Write/Edit 常传完整绝对路径，直接显示会把一行塞满。
@@ -720,6 +774,8 @@ function formatClaudeToolBrief(toolName, toolInput = {}) {
 function parseClaudeStreamBlock(event) {
   if (event.type === "system" && event.subtype === "init") {
     _lastClaudeBlockText = "";
+    _lastClaudeTextBlockId = "";
+    _claudeToolUses.clear();
     return null;
   }
 
@@ -729,18 +785,63 @@ function parseClaudeStreamBlock(event) {
   }
 
   if (event.type === "result") {
+    const blocks = [];
+
+    // 权限拒绝可见化：本轮被权限策略挡下的工具会进入 result.permission_denials，
+    // 否则用户只会看到"命令毫无反应"。Claude 的非交互 CLI 不支持像 Codex 那样的
+    // 回合内交互式批准（无 control protocol），这里只做"让拒绝看得见"，不提供
+    // 形同虚设的确认按钮——命令此时早已被放行或拒绝，事后再弹确认毫无意义。
+    const denials = Array.isArray(event.permission_denials) ? event.permission_denials : [];
+    for (const denial of denials) {
+      if (!denial || typeof denial !== "object") {
+        continue;
+      }
+      const tool = pickFirstText(denial.tool_name, denial.toolName, denial.name) || "tool";
+      const detail = pickFirstText(
+        denial.tool_input?.command,
+        denial.tool_input?.file_path,
+        denial.tool_input,
+        denial.message,
+        denial.reason
+      );
+      blocks.push({
+        id: nextAgentStreamBlockId("denied"),
+        type: "text",
+        tone: "error",
+        content: detail
+          ? t("chat.toolDeniedWith", { tool, detail: truncateInlineText(detail, 160) })
+          : t("chat.toolDenied", { tool })
+      });
+    }
+
     const content = normalizeConversationMessage(event.result || "");
-    if (!content || content === _lastClaudeBlockText) {
-      _lastClaudeBlockText = "";
-      return null;
+    const resultTone = event.is_error ? "error" : "result";
+    if (content) {
+      if (content === _lastClaudeBlockText && _lastClaudeTextBlockId) {
+        // 命中复述：把已流式显示的最终文本就地提升为「结果」样式，既不重复成两段，
+        // 又能让最终回答和中间叙述在视觉上区分开。
+        blocks.push({
+          id: _lastClaudeTextBlockId,
+          type: "text",
+          tone: resultTone
+        });
+      } else if (content !== _lastClaudeBlockText) {
+        // 极少数异常路径：result 文本与最后一段 assistant text 不同，单独成块。
+        blocks.push({
+          id: nextAgentStreamBlockId("text"),
+          type: "text",
+          tone: resultTone,
+          content
+        });
+      }
     }
     _lastClaudeBlockText = "";
-    return {
-      id: nextAgentStreamBlockId("text"),
-      type: "text",
-      tone: event.is_error ? "error" : undefined,
-      content
-    };
+    _lastClaudeTextBlockId = "";
+
+    if (!blocks.length) {
+      return null;
+    }
+    return blocks.length === 1 ? blocks[0] : blocks;
   }
 
   if (event.type === "assistant") {
@@ -752,7 +853,8 @@ function parseClaudeStreamBlock(event) {
         continue;
       }
 
-      // 思考/推理：以默认 thought 样式（小字、斜体、灰色）展示，
+      // 思维链：用 variant:"reasoning" 单独成卡（带「思考过程」标签），与下方
+      // 只读/检索类工具的「··」思考行明确区分——前者是 Claude 的推理，后者是动作。
       // 超过 conversationBlockExpandable 阈值（>420 字符或 >8 行）时会自动折叠。
       if (item.type === "thinking" || item.type === "reasoning") {
         const content = normalizeConversationMessage(
@@ -762,6 +864,7 @@ function parseClaudeStreamBlock(event) {
           blocks.push({
             id: item.id || nextAgentStreamBlockId("thinking"),
             type: "thought",
+            variant: "reasoning",
             content
           });
         }
@@ -774,6 +877,7 @@ function parseClaudeStreamBlock(event) {
         blocks.push({
           id: item.id || nextAgentStreamBlockId("thinking"),
           type: "thought",
+          variant: "reasoning",
           content: t("chat.claudeTool.redactedThinking")
         });
         continue;
@@ -782,12 +886,15 @@ function parseClaudeStreamBlock(event) {
       if (item.type === "tool_use") {
         const toolName = String(item.name || "").trim();
         const toolInput = item.input || {};
+        // 用 tool_use 的稳定 id 作为块 id，后续 tool_result 靠同一个 id 回填结果。
+        const toolId = item.id || nextAgentStreamBlockId("tool");
 
         if (toolName === "TodoWrite") {
           const todoItems = normalizeTodoEntries(toolInput);
           if (todoItems.length) {
+            _claudeToolUses.set(toolId, { kind: "todo" });
             blocks.push({
-              id: item.id || nextAgentStreamBlockId("todo"),
+              id: toolId,
               type: "todo",
               title: "Todo List",
               items: todoItems,
@@ -805,8 +912,9 @@ function parseClaudeStreamBlock(event) {
             toolInput.argv
           );
           if (command) {
+            _claudeToolUses.set(toolId, { kind: "command", command });
             blocks.push({
-              id: item.id || nextAgentStreamBlockId("command"),
+              id: toolId,
               type: "command",
               command,
               output: "",
@@ -816,13 +924,22 @@ function parseClaudeStreamBlock(event) {
           }
         }
 
+        // 文件写入类工具（Write/Edit/MultiEdit/NotebookEdit）单独归类，用 tone:"file"
+        // 的文本块呈现（与 Codex 的 file_change 风格统一），区别于只读/检索类工具的
+        // 思考块——"动了哪个文件"在视觉上更突出，消息块分类更清晰。
+        const isFileEdit = /^(Write|Edit|MultiEdit|NotebookEdit)$/u.test(toolName);
         const brief = formatClaudeToolBrief(toolName, toolInput);
+        _claudeToolUses.set(toolId, {
+          kind: isFileEdit ? "file" : "tool",
+          label: brief,
+          toolName
+        });
         if (brief) {
-          blocks.push({
-            id: item.id || nextAgentStreamBlockId("tool"),
-            type: "thought",
-            content: brief
-          });
+          blocks.push(
+            isFileEdit
+              ? { id: toolId, type: "text", tone: "file", content: brief }
+              : { id: toolId, type: "thought", content: brief }
+          );
         }
         continue;
       }
@@ -830,9 +947,13 @@ function parseClaudeStreamBlock(event) {
       if (item.type === "text") {
         const safeContent = normalizeConversationMessage(item.text || "");
         if (safeContent) {
+          // 先按"中间叙述文本"渲染（默认白卡）；若它正是本轮最终回答，turn 结束的
+          // result 事件会按 id 把它就地提升为"结果"样式。
+          const textId = nextAgentStreamBlockId("text");
           _lastClaudeBlockText = safeContent;
+          _lastClaudeTextBlockId = textId;
           blocks.push({
-            id: nextAgentStreamBlockId("text"),
+            id: textId,
             type: "text",
             content: safeContent
           });
@@ -842,6 +963,72 @@ function parseClaudeStreamBlock(event) {
     }
 
     if (blocks.length === 0) {
+      return null;
+    }
+    return blocks.length === 1 ? blocks[0] : blocks;
+  }
+
+  // 工具结果：Claude 把"工具调用"和"工具结果"拆成 assistant / user 两条事件，
+  // 真正的 stdout / 状态在这条 user 事件的 tool_result 里。没有这一步回填，
+  // Bash 命令块会永远停在 running 且没有输出（这正是命令运行结果显示不出来的根因）。
+  // 注意：--replay-user-messages 会把用户自己的 prompt 也作为 user 事件回放，
+  // 那种 content 是字符串、没有 tool_result，会被下面的过滤自然跳过。
+  if (event.type === "user") {
+    const items = Array.isArray(event.message?.content) ? event.message.content : [];
+    const blocks = [];
+
+    for (const item of items) {
+      if (!item || typeof item !== "object" || item.type !== "tool_result") {
+        continue;
+      }
+
+      const toolUseId = pickFirstText(item.tool_use_id, item.toolUseId, item.id);
+      const meta = toolUseId ? _claudeToolUses.get(toolUseId) : null;
+      if (toolUseId) {
+        // 消费后即删除，避免长会话里 Map 无界增长。
+        _claudeToolUses.delete(toolUseId);
+      }
+      const { text: resultText, isError } = extractClaudeToolResultText(item);
+
+      // Bash 命令：把输出与最终状态回填到占位块（同 id + type，upsert 就地更新）。
+      if (meta?.kind === "command") {
+        blocks.push({
+          id: toolUseId,
+          type: "command",
+          command: meta.command,
+          output: resultText,
+          status: isError ? "error" : "success"
+        });
+        continue;
+      }
+
+      // Todo：只把状态标记为完成，items 由 upsert 合并时沿用占位块里的内容
+      // （不带 items 字段，避免把已有清单覆盖成空）。
+      if (meta?.kind === "todo") {
+        blocks.push({
+          id: toolUseId,
+          type: "todo",
+          status: isError ? "error" : "success"
+        });
+        continue;
+      }
+
+      // 文件写入 / 只读检索类工具：成功无需重复渲染（占位行已说明做了什么），
+      // 失败则补一条错误块，否则工具报错（如 Read 不存在的文件）会被完全吞掉。
+      if (isError) {
+        const label = meta?.label
+          || (meta?.toolName ? t("chat.claudeTool.generic", { tool: meta.toolName }) : "");
+        const detail = resultText || t("chat.executionFailed");
+        blocks.push({
+          id: nextAgentStreamBlockId("tool-error"),
+          type: "text",
+          tone: "error",
+          content: label ? `${label}\n${detail}` : detail
+        });
+      }
+    }
+
+    if (!blocks.length) {
       return null;
     }
     return blocks.length === 1 ? blocks[0] : blocks;

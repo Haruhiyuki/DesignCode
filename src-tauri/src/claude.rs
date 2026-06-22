@@ -443,8 +443,12 @@ pub fn spawn_claude_stream_client(
         .arg("--verbose")
         .arg("--replay-user-messages")
         .arg("--include-partial-messages")
+        // auto 模式：交给 Claude 的分类器自动判定——安全命令直接执行，危险命令
+        // 自动拒绝并通过 result.permission_denials 上报（前端已渲染成红色提示）。
+        // 这是在无头 -p 模式下最贴近原生「无阻碍」体验的取舍：既不像 default 那样
+        // 频繁卡审批，也不像 bypassPermissions 那样完全关闭护栏。
         .arg("--permission-mode")
-        .arg("acceptEdits");
+        .arg("auto");
 
     if let Some(existing_session) = resume_session.as_deref() {
         command.arg("--resume").arg(existing_session);

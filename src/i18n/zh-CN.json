@@ -588,6 +588,10 @@
   "chat.claudeTool.generic": "调用 {tool}",
   "chat.claudeTool.genericWith": "调用 {tool}：{name}",
   "chat.claudeTool.redactedThinking": "Claude 正在思考（内容已加密）",
+  "chat.outputTruncated": "…（输出过长已截断）",
+  "chat.toolDenied": "{tool} 调用被权限策略拒绝。",
+  "chat.toolDeniedWith": "{tool} 调用被权限策略拒绝：{detail}",
+  "chat.reasoningLabel": "思考过程",
 
   "chat.shellExecHint1": "在当前工作区内执行下面这条 shell 命令。",
   "chat.shellExecHint2": "必须实际运行这条命令，而不是解释命令含义。",

@@ -269,6 +269,12 @@ function formatClaudeJsonEvent(event) {
     return "[claude] Session started";
   }
 
+  // init 之外的 system 事件（thinking_tokens 等内部计量）和 rate_limit_event
+  // 没有用户可读信息，却会高频刷屏日志面板，一律静音。
+  if (eventType === "system" || eventType === "rate_limit_event") {
+    return null;
+  }
+
   if (eventType === "assistant") {
     // 一条 assistant 事件的 content 可以同时包含 thinking、tool_use、text，
     // 以前循环里遇到第一条就 return 把其它都丢了；现在把所有识别到的都串起来
@@ -334,6 +340,13 @@ function formatClaudeJsonEvent(event) {
     if (lines.length) {
       return lines.join("\n");
     }
+  }
+
+  // 工具结果：输出已由对话区的命令块完整呈现，日志面板不再重复整段 stdout，
+  // 与 Codex 对命令输出的处理保持一致（避免大输出把日志撑爆）。
+  // --replay-user-messages 回放的用户原文同样在此被静音。
+  if (eventType === "user") {
+    return null;
   }
 
   if (eventType === "result") {
@@ -689,10 +702,14 @@ function serializeConversationBlocksForStorage(blocks = []) {
         if (!content) {
           return null;
         }
+        // 保留 variant（reasoning/rich），否则历史回放时思维链卡片会退化成普通思考行，
+        // 与实时视图不一致。
+        const variant = String(block.variant || "").trim();
         return {
           type: block.type,
           content,
-          tone: String(block.tone || "").trim()
+          tone: String(block.tone || "").trim(),
+          ...(variant ? { variant } : {})
         };
       }
 

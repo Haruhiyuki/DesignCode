@@ -588,6 +588,10 @@
   "chat.claudeTool.generic": "{tool} を使用",
   "chat.claudeTool.genericWith": "{tool} を使用：{name}",
   "chat.claudeTool.redactedThinking": "Claude が思考中（内容は非公開）",
+  "chat.outputTruncated": "…（出力が長いため省略）",
+  "chat.toolDenied": "{tool} の呼び出しは権限ポリシーにより拒否されました。",
+  "chat.toolDeniedWith": "{tool} の呼び出しは権限ポリシーにより拒否されました：{detail}",
+  "chat.reasoningLabel": "推論",
 
   "chat.shellExecHint1": "現在のワークスペースで次のシェルコマンドを実行してください。",
   "chat.shellExecHint2": "コマンドの意味を説明するのではなく、実際に実行してください。",

@@ -588,6 +588,10 @@
   "chat.claudeTool.generic": "Use {tool}",
   "chat.claudeTool.genericWith": "Use {tool}: {name}",
   "chat.claudeTool.redactedThinking": "Claude is thinking (content redacted)",
+  "chat.outputTruncated": "… (output truncated)",
+  "chat.toolDenied": "{tool} call was denied by the permission policy.",
+  "chat.toolDeniedWith": "{tool} call was denied by the permission policy: {detail}",
+  "chat.reasoningLabel": "Reasoning",
 
   "chat.shellExecHint1": "Execute the following shell command in the current workspace.",
   "chat.shellExecHint2": "You must actually run this command, not explain what it does.",
