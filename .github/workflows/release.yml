@@ -70,10 +70,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install bundled runtime CLIs (opencode / codex / gemini)
-        # 固定版本到本地测试过的同版本，避免 CI 拉到更新版带来的行为差异；
-        # 想升级时改这里并同步本地再发版。
-        run: npm install -g opencode-ai@1.2.27 @openai/codex@0.118.0 @google/gemini-cli@0.34.0
+      - name: Install bundled runtime CLIs (opencode / codex)
+        # OpenCode 和 Codex 跟随每次发版时 npm 上的 latest，避免分发版长期落后。
+        run: npm install -g opencode-ai@latest @openai/codex@latest
+
+      - name: Print bundled runtime CLI versions
+        run: |
+          opencode --version
+          codex --version
 
       - name: Prepare desktop runtime (sign bundled node binaries)
         run: node scripts/prepare-desktop-runtime.mjs --sign
@@ -138,10 +142,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install bundled runtime CLIs (opencode / codex / gemini)
-        # 固定版本到本地测试过的同版本，避免 CI 拉到更新版带来的行为差异；
-        # 想升级时改这里并同步本地再发版。
-        run: npm install -g opencode-ai@1.2.27 @openai/codex@0.118.0 @google/gemini-cli@0.34.0
+      - name: Install bundled runtime CLIs (opencode / codex)
+        # OpenCode 和 Codex 跟随每次发版时 npm 上的 latest，避免分发版长期落后。
+        run: npm install -g opencode-ai@latest @openai/codex@latest
+
+      - name: Print bundled runtime CLI versions
+        run: |
+          opencode --version
+          codex --version
 
       - name: Prepare desktop runtime
         run: node scripts/prepare-desktop-runtime.mjs
