@@ -33,6 +33,7 @@ pub const MENU_ACTION_EVENT: &str = "designcode://menu-action";
 pub const CODEX_APP_SERVER_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 pub const CODEX_TURN_TIMEOUT: Duration = Duration::from_secs(1800);
 pub const OPENCODE_READY_TIMEOUT: Duration = Duration::from_secs(60);
+const BRIDGE_CLI_RELATIVE_PATH: &str = "app/server/bridge-cli.js";
 
 // ---------------------------------------------------------------------------
 // 工具函数
@@ -890,7 +891,7 @@ pub fn resolve_project_root(app: &AppHandle) -> Result<PathBuf, String> {
 
     fn is_valid_project_root(candidate: &Path) -> bool {
         candidate.join("package.json").exists()
-            && candidate.join("app/server/bridge-cli.js").exists()
+            && candidate.join(BRIDGE_CLI_RELATIVE_PATH).exists()
     }
 
     fn candidate_rank(candidate: &Path) -> u8 {
@@ -928,7 +929,6 @@ pub fn bridge_data_root(app: &AppHandle) -> Option<PathBuf> {
 
 pub fn run_node_bridge(app: &AppHandle, mode: &str, payload: Option<Value>) -> Result<Value, String> {
     let root = resolve_project_root(app)?;
-    let script = root.join("app/server/bridge-cli.js");
     let node_binary = resolve_node_binary(app);
 
     let mut command = Command::new(&node_binary);
@@ -937,7 +937,10 @@ pub fn run_node_bridge(app: &AppHandle, mode: &str, payload: Option<Value>) -> R
     configure_background_command(&mut command);
     command
         .current_dir(&root)
-        .arg(&script)
+        // Windows 上直接把 D:\... 绝对路径交给 Node 作为入口脚本时，
+        // 某些安装路径会在 Node 的入口解析阶段退化成盘符 D:。
+        // cwd 已经固定到项目根目录，所以这里使用稳定的相对入口。
+        .arg(BRIDGE_CLI_RELATIVE_PATH)
         .arg(mode)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
